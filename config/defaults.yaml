@@ -1,0 +1,11 @@
+defaults:
+  samples: 10
+  conversation_type: both
+  max_turns: 6
+  output_dir: outputs
+  job_name: null
+  model:
+    provider: openai
+    model_name: gpt-4o-mini
+    temperature: 0.8
+    max_tokens: 800

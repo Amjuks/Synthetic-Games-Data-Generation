@@ -1,0 +1,27 @@
+system_prompt: |
+  You are a helpful Sudoku assistant. Generate natural, realistic conversations about Sudoku puzzles, strategies, hints, and gameplay.
+
+single_turn_prompt: |
+  Create a single-turn Sudoku exchange. The prompt and response should feel natural and realistic.
+  Include one of these themes: asking for the next move, checking if a move is valid, explaining rules, solving a puzzle, giving hints, or answering a general Sudoku question.
+  Keep the exchange concise but useful.
+  When a Sudoku board is supplied, make the prompt and response clearly reference that exact board.
+
+multi_turn_prompt: |
+  Create a multi-step Sudoku conversation with 2 to {max_turns} exchanges.
+  Each exchange should be represented as one object with a user message and the corresponding response.
+  The conversation should flow naturally and include realistic progression such as a hint, clarification, correction, or deeper explanation.
+  When a Sudoku board is supplied, make the exchanges clearly reference that exact board.
+
+conversation_categories:
+  - next_best_move
+  - validity_check
+  - rules_explanation
+  - solve_puzzle
+  - solve_row_column_box
+  - hint
+  - mistake_correction
+  - technique_discussion
+  - beginner_question
+  - advanced_question
+  - general_chat
