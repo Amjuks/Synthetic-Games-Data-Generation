@@ -18,6 +18,9 @@ class ModelClient:
         if self.provider == "openai" and self.api_key:
             return self._openai_generate(prompt)
 
+        if self.provider == "custom_chat" and self.endpoint:
+            return self._custom_chat_generate(prompt)
+
         if not self.endpoint:
             return self._mock_generate(prompt)
 
@@ -61,6 +64,37 @@ class ModelClient:
 
         response = client.responses.create(**request_kwargs)
         return getattr(response, "output_text", "") or ""
+
+    def _custom_chat_generate(self, prompt: str) -> str:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        payload: dict[str, Any] = {
+            "model": self.config.get("model_name", "gpt-oss-120b"),
+            "messages": [
+                {"role": "system", "content": f"Reasoning: {self.config.get('reasoning', 'Low')}"},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": self.config.get("temperature", 0.1),
+            "chat_template_kwargs": {
+                "enable_thinking": self.config.get("enable_thinking", False),
+            },
+        }
+
+        max_tokens = self.config.get("max_tokens")
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+
+        response = requests.post(
+            self.endpoint,
+            headers=headers,
+            json=payload,
+            timeout=60,
+        )
+        response.raise_for_status()
+        body = response.json()
+        return body.get("choices", [{}])[0].get("message", {}).get("content", "")
 
     def _mock_generate(self, prompt: str) -> str:
         prompt_lower = prompt.lower()

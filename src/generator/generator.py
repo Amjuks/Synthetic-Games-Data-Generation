@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import random
+import traceback
+from pathlib import Path
 from typing import Any
 
 from .config import get_config
-from .exporters import write_csv
+from .exporters import append_csv_row
 from .jobs import JobManager
 from .model_client import ModelClient
 
@@ -181,42 +183,116 @@ class ConversationGenerator:
         return "\n".join(formatted_rows)
 
     def run(self, samples: int, conversation_type: str = "both", max_turns: int = 6, job_name: str | None = None) -> dict[str, Any]:
-        job_manager = JobManager(job_name=job_name)
+        job_manager = JobManager(job_name=job_name, config=self.config)
+        status = job_manager.get_status()
+        target_total = self._resolve_target_total(status, samples)
+        self._validate_resume_config(status, conversation_type, max_turns)
+
+        resume_state = job_manager.get_resume_state()
+        completed = resume_state["completed"]
+        single_turn_count = resume_state["single_turn_count"]
+        multi_turn_count = resume_state["multi_turn_count"]
+        start_index = resume_state["next_sample_index"]
+        single_turn_path = job_manager.job_dir / "single_turn.csv"
+        multi_turn_path = job_manager.job_dir / "multi_turn.csv"
+
         job_manager.save_status(
             status="running",
-            total=samples,
+            total=target_total,
+            completed=completed,
             current_stage="generating",
             conversation_type=conversation_type,
             max_turns=max_turns,
+            next_sample_index=start_index,
+            single_turn_count=single_turn_count,
+            multi_turn_count=multi_turn_count,
+            single_turn_path=str(single_turn_path),
+            multi_turn_path=str(multi_turn_path),
+            last_error=None,
         )
 
-        single_rows: list[dict[str, Any]] = []
-        multi_rows: list[dict[str, Any]] = []
+        try:
+            for sample_index in range(start_index, target_total):
+                if conversation_type in ("both", "single_turn"):
+                    row = self.generate_single_turn(sample_index)
+                    append_csv_row(single_turn_path, row)
+                    single_turn_count += 1
+                if conversation_type in ("both", "multi_turn"):
+                    row = self.generate_multi_turn(sample_index)
+                    append_csv_row(multi_turn_path, row)
+                    multi_turn_count += 1
 
-        for i in range(samples):
-            if conversation_type in ("both", "single_turn"):
-                row = self.generate_single_turn(i)
-                single_rows.append(row)
-            if conversation_type in ("both", "multi_turn"):
-                row = self.generate_multi_turn(i)
-                multi_rows.append(row)
-            job_manager.save_status(completed=i + 1, status="running")
-
-        write_csv(job_manager.job_dir / "single_turn.csv", single_rows)
-        write_csv(job_manager.job_dir / "multi_turn.csv", multi_rows)
+                completed = sample_index + 1
+                job_manager.save_status(
+                    completed=completed,
+                    next_sample_index=completed,
+                    single_turn_count=single_turn_count,
+                    multi_turn_count=multi_turn_count,
+                    status="running",
+                    current_stage="generating",
+                )
+        except KeyboardInterrupt:
+            job_manager.save_status(
+                status="stopped",
+                current_stage="interrupted",
+                completed=completed,
+                next_sample_index=completed,
+                single_turn_count=single_turn_count,
+                multi_turn_count=multi_turn_count,
+                last_error="Generation stopped by user.",
+            )
+            raise
+        except Exception as exc:
+            job_manager.save_status(
+                status="failed",
+                current_stage="error",
+                completed=completed,
+                next_sample_index=completed,
+                single_turn_count=single_turn_count,
+                multi_turn_count=multi_turn_count,
+                last_error=f"{type(exc).__name__}: {exc}",
+                last_error_traceback=traceback.format_exc(),
+            )
+            raise
 
         job_manager.save_status(
             status="completed",
+            total=target_total,
+            completed=completed,
+            next_sample_index=completed,
             current_stage="finished",
-            single_turn_count=len(single_rows),
-            multi_turn_count=len(multi_rows),
+            single_turn_count=single_turn_count,
+            multi_turn_count=multi_turn_count,
+            last_error=None,
         )
         return {
             "job_name": job_manager.job_name,
             "job_dir": str(job_manager.job_dir),
-            "single_turn_count": len(single_rows),
-            "multi_turn_count": len(multi_rows),
+            "completed": completed,
+            "total": target_total,
+            "single_turn_count": single_turn_count,
+            "multi_turn_count": multi_turn_count,
         }
+
+    def _resolve_target_total(self, status: dict[str, Any], requested_samples: int) -> int:
+        existing_total = int(status.get("total", 0) or 0)
+        if existing_total > requested_samples:
+            return existing_total
+        return requested_samples
+
+    def _validate_resume_config(self, status: dict[str, Any], conversation_type: str, max_turns: int) -> None:
+        existing_conversation_type = status.get("conversation_type")
+        if existing_conversation_type and existing_conversation_type != conversation_type:
+            raise ValueError(
+                f"Job '{status.get('job_name')}' was started with conversation_type="
+                f"'{existing_conversation_type}', not '{conversation_type}'."
+            )
+
+        existing_max_turns = status.get("max_turns")
+        if existing_max_turns is not None and int(existing_max_turns) != int(max_turns):
+            raise ValueError(
+                f"Job '{status.get('job_name')}' was started with max_turns={existing_max_turns}, not {max_turns}."
+            )
 
 
 BOARD_TEMPLATES = [
