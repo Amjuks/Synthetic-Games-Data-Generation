@@ -34,6 +34,9 @@ class JobManager:
             "single_turn_count": 0,
             "multi_turn_count": 0,
             "next_sample_index": 0,
+            "accepted_samples": 0,
+            "rejected_samples": 0,
+            "distribution_stats": {},
             "last_error": None,
         }
 
@@ -56,6 +59,8 @@ class JobManager:
             "single_turn_count": int(status.get("single_turn_count", 0) or 0),
             "multi_turn_count": int(status.get("multi_turn_count", 0) or 0),
             "next_sample_index": int(status.get("next_sample_index", status.get("completed", 0)) or 0),
+            "accepted_samples": int(status.get("accepted_samples", 0) or 0),
+            "rejected_samples": int(status.get("rejected_samples", 0) or 0),
             "status": status.get("status", "initialized"),
             "total": int(status.get("total", 0) or 0),
         }

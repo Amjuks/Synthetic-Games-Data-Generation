@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import hashlib
 import json
-import random
+import re
 import traceback
-from pathlib import Path
 from typing import Any
 
 from .config import get_config
-from .exporters import append_csv_row
+from .diversity import SimilarityDiversityChecker
 from .jobs import JobManager
 from .model_client import ModelClient
+from .models import DatasetSample, PuzzleRecord, Scenario, utc_now_iso
+from .puzzles import PuzzleManager
+from .scenario import ScenarioGenerator
+from .storage import DatasetStorage
+from .validation import SampleValidator
 
 
 class ConversationGenerator:
@@ -17,113 +22,326 @@ class ConversationGenerator:
         self.config = config or get_config()
         self.prompts = self.config.get("prompts", {})
         self.model_client = ModelClient(self.config.get("model", {}))
+        self.scenario_generator = ScenarioGenerator(self.config)
+        self.puzzle_manager = PuzzleManager(self.config)
+        self.validator = SampleValidator()
+        self.diversity_checker = SimilarityDiversityChecker(self.config)
+        self.generation_model = self.config.get("model", {}).get("model_name", "unknown-model")
+        self.max_regeneration_attempts = int(self.config.get("generation", {}).get("max_regeneration_attempts", 3))
+
+    def run(self, samples: int, conversation_type: str = "both", max_turns: int = 6, job_name: str | None = None) -> dict[str, Any]:
+        job_manager = JobManager(job_name=job_name, config=self.config)
+        status = job_manager.get_status()
+        target_total = self._resolve_target_total(status, samples)
+        self._validate_resume_config(status, conversation_type, max_turns)
+
+        storage = DatasetStorage(job_manager.job_dir, self.config)
+        history = storage.get_history()
+        distribution_stats = self.diversity_checker.summarize_distribution(history)
+        resume_state = job_manager.get_resume_state()
+        completed = resume_state["completed"]
+        accepted_samples = int(status.get("accepted_samples", len(history)) or len(history))
+        rejected_samples = max(int(status.get("rejected_samples", 0) or 0), storage.get_rejected_count())
+        start_index = resume_state["next_sample_index"]
+
+        job_manager.save_status(
+            status="running",
+            total=target_total,
+            completed=completed,
+            current_stage="generating",
+            conversation_type=conversation_type,
+            max_turns=max_turns,
+            next_sample_index=start_index,
+            accepted_samples=accepted_samples,
+            rejected_samples=rejected_samples,
+            metadata_path=str(storage.metadata_path),
+            rejected_path=str(storage.rejected_path),
+            single_turn_path=str(storage.single_turn_path),
+            multi_turn_path=str(storage.multi_turn_path),
+            distribution_stats=distribution_stats,
+            last_error=None,
+        )
+
+        try:
+            for sample_index in range(start_index, target_total):
+                generated_records = self._generate_records_for_index(
+                    sample_index=sample_index,
+                    conversation_type=conversation_type,
+                    max_turns=max_turns,
+                    distribution_stats=distribution_stats,
+                    history=history,
+                    storage=storage,
+                )
+                history.extend(generated_records["accepted"])
+                accepted_samples += len(generated_records["accepted"])
+                rejected_samples = storage.get_rejected_count()
+                distribution_stats = self.diversity_checker.summarize_distribution(history)
+
+                completed = sample_index + 1
+                job_manager.save_status(
+                    completed=completed,
+                    next_sample_index=completed,
+                    accepted_samples=accepted_samples,
+                    rejected_samples=rejected_samples,
+                    distribution_stats=distribution_stats,
+                    status="running",
+                    current_stage="generating",
+                )
+        except KeyboardInterrupt:
+            rejected_samples = storage.get_rejected_count()
+            job_manager.save_status(
+                status="stopped",
+                current_stage="interrupted",
+                completed=completed,
+                next_sample_index=completed,
+                accepted_samples=accepted_samples,
+                rejected_samples=rejected_samples,
+                distribution_stats=distribution_stats,
+                last_error="Generation stopped by user.",
+            )
+            raise
+        except Exception as exc:
+            rejected_samples = storage.get_rejected_count()
+            job_manager.save_status(
+                status="failed",
+                current_stage="error",
+                completed=completed,
+                next_sample_index=completed,
+                accepted_samples=accepted_samples,
+                rejected_samples=rejected_samples,
+                distribution_stats=distribution_stats,
+                last_error=f"{type(exc).__name__}: {exc}",
+                last_error_traceback=traceback.format_exc(),
+            )
+            raise
+
+        job_manager.save_status(
+            status="completed",
+            total=target_total,
+            completed=completed,
+            next_sample_index=completed,
+            current_stage="finished",
+            accepted_samples=accepted_samples,
+            rejected_samples=rejected_samples,
+            distribution_stats=distribution_stats,
+            last_error=None,
+        )
+        return {
+            "job_name": job_manager.job_name,
+            "job_dir": str(job_manager.job_dir),
+            "completed": completed,
+            "total": target_total,
+            "accepted_samples": accepted_samples,
+            "rejected_samples": rejected_samples,
+            "metadata_path": str(storage.metadata_path),
+        }
 
     def generate_single_turn(self, sample_index: int) -> dict[str, Any]:
-        category = self._choose_category()
-        board = self._get_board_for_category(category, sample_index)
-        prompt = self._build_single_turn_prompt(sample_index, category, board)
-        raw_output = self.model_client.generate(prompt)
-        return self._parse_output(raw_output, sample_index, "single_turn", category, board)
+        scenario = self.scenario_generator.generate(
+            sample_index=sample_index,
+            conversation_type="single_turn",
+            max_turns=1,
+            distribution_stats={},
+        )
+        puzzle = self.puzzle_manager.select_puzzle(scenario, sample_index)
+        output = self._generate_output(scenario, puzzle)
+        return output
 
     def generate_multi_turn(self, sample_index: int) -> dict[str, Any]:
-        category = self._choose_category()
-        board = self._get_board_for_category(category, sample_index)
-        prompt = self._build_multi_turn_prompt(sample_index, category, board)
-        raw_output = self.model_client.generate(prompt)
-        return self._parse_output(raw_output, sample_index, "multi_turn", category, board)
-
-    def _build_single_turn_prompt(self, sample_index: int, category: str, board: str) -> str:
-        board_section = self._build_board_section(board)
-        return (
-            f"{self.prompts.get('system_prompt', '')}\n\n"
-            f"{self.prompts.get('single_turn_prompt', '')}\n"
-            f"Category: {category}\n"
-            f"Sample index: {sample_index}\n"
-            f"{board_section}"
-            "Return minified JSON with keys: prompt, response, conversation_type, category, board.\n"
-            "Use conversation_type='single_turn'.\n"
-            "If a board is provided, preserve it exactly in the board field and ground the prompt and response in that board."
+        scenario = self.scenario_generator.generate(
+            sample_index=sample_index,
+            conversation_type="multi_turn",
+            max_turns=self.config.get("max_turns", 6),
+            distribution_stats={},
         )
+        puzzle = self.puzzle_manager.select_puzzle(scenario, sample_index)
+        output = self._generate_output(scenario, puzzle)
+        return output
 
-    def _build_multi_turn_prompt(self, sample_index: int, category: str, board: str) -> str:
-        max_turns = self.config.get("max_turns", 6)
-        board_section = self._build_board_section(board)
-        return (
-            f"{self.prompts.get('system_prompt', '')}\n\n"
-            f"{self.prompts.get('multi_turn_prompt', '').format(max_turns=max_turns)}\n"
-            f"Category: {category}\n"
-            f"Sample index: {sample_index}\n"
-            f"{board_section}"
-            "Return minified JSON with keys: messages, conversation_type, category, board.\n"
-            "Use conversation_type='multi_turn'.\n"
-            "messages must be a list of objects, each with keys: user, response.\n"
-            "If a board is provided, preserve it exactly in the board field and make the exchange refer to that board."
-        )
-
-    def _parse_output(
+    def _generate_records_for_index(
         self,
-        raw_output: str,
+        *,
         sample_index: int,
         conversation_type: str,
-        category: str,
-        board: str,
+        max_turns: int,
+        distribution_stats: dict[str, Any],
+        history: list[dict[str, Any]],
+        storage: DatasetStorage,
     ) -> dict[str, Any]:
-        try:
-            payload = json.loads(raw_output)
-        except json.JSONDecodeError:
+        accepted: list[dict[str, Any]] = []
+        rejected = 0
+        generation_types = ["single_turn", "multi_turn"] if conversation_type == "both" else [conversation_type]
+
+        for generation_type in generation_types:
+            accepted_sample, rejected_count = self._generate_validated_sample(
+                sample_index=sample_index,
+                generation_type=generation_type,
+                max_turns=max_turns,
+                distribution_stats=distribution_stats,
+                history=history + accepted,
+                storage=storage,
+            )
+            accepted.append(accepted_sample)
+            rejected += rejected_count
+
+        return {"accepted": accepted, "rejected": rejected}
+
+    def _generate_validated_sample(
+        self,
+        *,
+        sample_index: int,
+        generation_type: str,
+        max_turns: int,
+        distribution_stats: dict[str, Any],
+        history: list[dict[str, Any]],
+        storage: DatasetStorage,
+    ) -> tuple[dict[str, Any], int]:
+        rejected_count = 0
+        rejection_reasons: list[dict[str, Any]] = []
+
+        for attempt in range(self.max_regeneration_attempts):
+            scenario = self.scenario_generator.generate(
+                sample_index=sample_index * self.max_regeneration_attempts + attempt,
+                conversation_type=generation_type,
+                max_turns=max_turns,
+                distribution_stats=distribution_stats,
+            )
+            puzzle = self.puzzle_manager.select_puzzle(scenario, sample_index * self.max_regeneration_attempts + attempt)
+            output = self._generate_output(scenario, puzzle)
+            validation_result = self.validator.validate(output, scenario, puzzle)
+            if not validation_result.is_valid:
+                rejected_count += 1
+                rejection = self._build_rejection_record(
+                    sample_index=sample_index,
+                    attempt=attempt,
+                    scenario=scenario,
+                    puzzle=puzzle,
+                    output=output,
+                    reasons=validation_result.errors,
+                    rejection_type="validation",
+                )
+                storage.append_rejected_sample(rejection)
+                rejection_reasons.append(rejection)
+                continue
+
+            conversation = self._conversation_payload(output)
+            sample_id = self._build_sample_id(sample_index, generation_type, scenario, puzzle)
+            candidate_sample = DatasetSample.create(
+                sample_id=sample_id,
+                scenario=scenario,
+                puzzle=puzzle,
+                conversation=conversation,
+                output=output,
+                similarity_score=0.0,
+                generation_model=self.generation_model,
+                validation_status="passed",
+            )
+            candidate_dict = candidate_sample.to_dict()
+            similarity_result = self.diversity_checker.assess(candidate_dict, history)
+            if not similarity_result.accepted:
+                rejected_count += 1
+                rejection = self._build_rejection_record(
+                    sample_index=sample_index,
+                    attempt=attempt,
+                    scenario=scenario,
+                    puzzle=puzzle,
+                    output=output,
+                    reasons=similarity_result.reasons,
+                    rejection_type="similarity",
+                    metrics=similarity_result.metrics,
+                )
+                storage.append_rejected_sample(rejection)
+                rejection_reasons.append(rejection)
+                continue
+
+            candidate_dict["similarity_score"] = similarity_result.similarity_score
+            storage.append_sample(candidate_dict)
+            self.puzzle_manager.mark_used(puzzle)
+            return candidate_dict, rejected_count
+
+        raise RuntimeError(
+            f"Unable to generate a valid diverse {generation_type} sample for sample_index={sample_index} "
+            f"after {self.max_regeneration_attempts} attempts. Last rejection: {rejection_reasons[-1] if rejection_reasons else 'unknown'}"
+        )
+
+    def _generate_output(self, scenario: Scenario, puzzle: PuzzleRecord) -> dict[str, Any]:
+        prompt = self._build_generation_prompt(scenario, puzzle)
+        raw_output = self.model_client.generate(prompt)
+        return self._parse_output(raw_output, scenario, puzzle)
+
+    def _build_generation_prompt(self, scenario: Scenario, puzzle: PuzzleRecord) -> str:
+        output_schema = (
+            "Return minified JSON with keys: prompt, response, conversation_type, category, board."
+            if scenario.conversation_type == "single_turn"
+            else "Return minified JSON with keys: messages, conversation_type, category, board. "
+                 "messages must be a list of objects with keys: user, response."
+        )
+        prompt_template = (
+            self.prompts.get("single_turn_prompt", "")
+            if scenario.conversation_type == "single_turn"
+            else self.prompts.get("multi_turn_prompt", "").format(max_turns=scenario.num_turns)
+        )
+        return (
+            f"{self.prompts.get('system_prompt', '')}\n\n"
+            f"{prompt_template}\n\n"
+            f"Scenario JSON:\n{json.dumps(scenario.to_dict(), ensure_ascii=False)}\n\n"
+            f"Puzzle JSON:\n{json.dumps(puzzle.to_dict(), ensure_ascii=False)}\n\n"
+            f"Puzzle board:\n{puzzle.rendered_board}\n\n"
+            f"Output schema:\n{output_schema}\n"
+            "Use the supplied puzzle exactly and never invent or modify the board unless the scenario explicitly requires malformed input.\n"
+            "Keep the task category aligned with the scenario.\n"
+        )
+
+    def _parse_output(self, raw_output: str, scenario: Scenario, puzzle: PuzzleRecord) -> dict[str, Any]:
+        payload = self._load_json_payload(raw_output)
+        if payload is None:
             payload = {
-                "conversation_type": conversation_type,
-                "category": category,
+                "conversation_type": scenario.conversation_type,
+                "category": scenario.task_category,
                 "prompt": raw_output,
                 "response": raw_output,
                 "messages": [{"user": raw_output, "response": raw_output}],
-                "board": board,
+                "board": puzzle.rendered_board,
             }
 
-        if conversation_type == "multi_turn":
+        if scenario.conversation_type == "multi_turn":
             payload = {
                 "conversation_type": "multi_turn",
-                "category": payload.get("category", category),
+                "category": payload.get("category", scenario.task_category),
                 "messages": self._normalize_messages(payload),
-                "board": payload.get("board", board),
-                "sample_index": sample_index,
+                "board": payload.get("board", puzzle.rendered_board),
             }
         else:
             payload = {
                 "conversation_type": "single_turn",
-                "category": payload.get("category", category),
+                "category": payload.get("category", scenario.task_category),
                 "prompt": payload.get("prompt", payload.get("user", "")),
                 "response": payload.get("response", payload.get("assistant", "")),
-                "board": payload.get("board", board),
-                "sample_index": sample_index,
+                "board": payload.get("board", puzzle.rendered_board),
             }
         return payload
 
-    def _choose_category(self) -> str:
-        categories = self.prompts.get("conversation_categories", [])
-        return random.choice(categories) if categories else "general_chat"
+    def _load_json_payload(self, raw_output: str) -> dict[str, Any] | None:
+        candidates = [raw_output.strip()]
+        fenced_match = re.search(r"```(?:json)?\s*(\{.*\}|\[.*\])\s*```", raw_output, flags=re.DOTALL)
+        if fenced_match:
+            candidates.append(fenced_match.group(1).strip())
 
-    def _get_board_for_category(self, category: str, sample_index: int) -> str:
-        if not self._category_needs_board(category):
-            return ""
-        template = BOARD_TEMPLATES[sample_index % len(BOARD_TEMPLATES)]
-        return self._format_board(template)
+        start_object = raw_output.find("{")
+        end_object = raw_output.rfind("}")
+        if start_object != -1 and end_object != -1 and end_object > start_object:
+            candidates.append(raw_output[start_object:end_object + 1].strip())
 
-    def _category_needs_board(self, category: str) -> bool:
-        return category in {
-            "next_best_move",
-            "validity_check",
-            "solve_puzzle",
-            "solve_row_column_box",
-            "hint",
-            "mistake_correction",
-            "advanced_question",
-        }
-
-    def _build_board_section(self, board: str) -> str:
-        if not board:
-            return ""
-        return f"Sudoku board:\n{board}\n"
+        for candidate in candidates:
+            if not candidate:
+                continue
+            try:
+                payload = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                return payload
+        return None
 
     def _normalize_messages(self, payload: dict[str, Any]) -> list[dict[str, str]]:
         messages = payload.get("messages")
@@ -171,107 +389,38 @@ class ConversationGenerator:
             "response": str(item.get("response", item.get("content", "" if "role" in item else ""))),
         }
 
-    def _format_board(self, rows: list[str]) -> str:
-        formatted_rows: list[str] = []
-        for row_index, row in enumerate(rows):
-            values = [value if value != "0" else "." for value in row]
-            formatted_rows.append(
-                f"{' '.join(values[0:3])} | {' '.join(values[3:6])} | {' '.join(values[6:9])}"
-            )
-            if row_index in {2, 5}:
-                formatted_rows.append("------+-------+------")
-        return "\n".join(formatted_rows)
+    def _conversation_payload(self, output: dict[str, Any]) -> dict[str, Any]:
+        if output.get("conversation_type") == "multi_turn":
+            return {"messages": output.get("messages", [])}
+        return {"prompt": output.get("prompt", ""), "response": output.get("response", "")}
 
-    def run(self, samples: int, conversation_type: str = "both", max_turns: int = 6, job_name: str | None = None) -> dict[str, Any]:
-        job_manager = JobManager(job_name=job_name, config=self.config)
-        status = job_manager.get_status()
-        target_total = self._resolve_target_total(status, samples)
-        self._validate_resume_config(status, conversation_type, max_turns)
+    def _build_sample_id(self, sample_index: int, generation_type: str, scenario: Scenario, puzzle: PuzzleRecord) -> str:
+        return hashlib.sha1(
+            f"{sample_index}|{generation_type}|{scenario.scenario_id}|{puzzle.puzzle_id}|{utc_now_iso()}".encode("utf-8")
+        ).hexdigest()[:20]
 
-        resume_state = job_manager.get_resume_state()
-        completed = resume_state["completed"]
-        single_turn_count = resume_state["single_turn_count"]
-        multi_turn_count = resume_state["multi_turn_count"]
-        start_index = resume_state["next_sample_index"]
-        single_turn_path = job_manager.job_dir / "single_turn.csv"
-        multi_turn_path = job_manager.job_dir / "multi_turn.csv"
-
-        job_manager.save_status(
-            status="running",
-            total=target_total,
-            completed=completed,
-            current_stage="generating",
-            conversation_type=conversation_type,
-            max_turns=max_turns,
-            next_sample_index=start_index,
-            single_turn_count=single_turn_count,
-            multi_turn_count=multi_turn_count,
-            single_turn_path=str(single_turn_path),
-            multi_turn_path=str(multi_turn_path),
-            last_error=None,
-        )
-
-        try:
-            for sample_index in range(start_index, target_total):
-                if conversation_type in ("both", "single_turn"):
-                    row = self.generate_single_turn(sample_index)
-                    append_csv_row(single_turn_path, row)
-                    single_turn_count += 1
-                if conversation_type in ("both", "multi_turn"):
-                    row = self.generate_multi_turn(sample_index)
-                    append_csv_row(multi_turn_path, row)
-                    multi_turn_count += 1
-
-                completed = sample_index + 1
-                job_manager.save_status(
-                    completed=completed,
-                    next_sample_index=completed,
-                    single_turn_count=single_turn_count,
-                    multi_turn_count=multi_turn_count,
-                    status="running",
-                    current_stage="generating",
-                )
-        except KeyboardInterrupt:
-            job_manager.save_status(
-                status="stopped",
-                current_stage="interrupted",
-                completed=completed,
-                next_sample_index=completed,
-                single_turn_count=single_turn_count,
-                multi_turn_count=multi_turn_count,
-                last_error="Generation stopped by user.",
-            )
-            raise
-        except Exception as exc:
-            job_manager.save_status(
-                status="failed",
-                current_stage="error",
-                completed=completed,
-                next_sample_index=completed,
-                single_turn_count=single_turn_count,
-                multi_turn_count=multi_turn_count,
-                last_error=f"{type(exc).__name__}: {exc}",
-                last_error_traceback=traceback.format_exc(),
-            )
-            raise
-
-        job_manager.save_status(
-            status="completed",
-            total=target_total,
-            completed=completed,
-            next_sample_index=completed,
-            current_stage="finished",
-            single_turn_count=single_turn_count,
-            multi_turn_count=multi_turn_count,
-            last_error=None,
-        )
+    def _build_rejection_record(
+        self,
+        *,
+        sample_index: int,
+        attempt: int,
+        scenario: Scenario,
+        puzzle: PuzzleRecord,
+        output: dict[str, Any],
+        reasons: list[str],
+        rejection_type: str,
+        metrics: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         return {
-            "job_name": job_manager.job_name,
-            "job_dir": str(job_manager.job_dir),
-            "completed": completed,
-            "total": target_total,
-            "single_turn_count": single_turn_count,
-            "multi_turn_count": multi_turn_count,
+            "timestamp": utc_now_iso(),
+            "sample_index": sample_index,
+            "attempt": attempt,
+            "rejection_type": rejection_type,
+            "reasons": reasons,
+            "metrics": metrics or {},
+            "scenario": scenario.to_dict(),
+            "puzzle_metadata": puzzle.to_dict(),
+            "output": output,
         }
 
     def _resolve_target_total(self, status: dict[str, Any], requested_samples: int) -> int:
@@ -293,40 +442,3 @@ class ConversationGenerator:
             raise ValueError(
                 f"Job '{status.get('job_name')}' was started with max_turns={existing_max_turns}, not {max_turns}."
             )
-
-
-BOARD_TEMPLATES = [
-    [
-        "530070000",
-        "600195000",
-        "098000060",
-        "800060003",
-        "400803001",
-        "700020006",
-        "060000280",
-        "000419005",
-        "000080079",
-    ],
-    [
-        "003020600",
-        "900305001",
-        "001806400",
-        "008102900",
-        "700000008",
-        "006708200",
-        "002609500",
-        "800203009",
-        "005010300",
-    ],
-    [
-        "200080300",
-        "060070084",
-        "030500209",
-        "000105408",
-        "000000000",
-        "402706000",
-        "301007040",
-        "720040060",
-        "004010003",
-    ],
-]

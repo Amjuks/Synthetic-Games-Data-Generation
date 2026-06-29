@@ -4,8 +4,83 @@ defaults:
   max_turns: 6
   output_dir: outputs
   job_name: null
+  generation:
+    random_seed: 17
+    max_regeneration_attempts: 3
   model:
     provider: openai
     model_name: gpt-4o-mini
     temperature: 0.8
     max_tokens: 800
+  storage:
+    metadata_filename: samples.jsonl
+    rejected_filename: rejected_samples.jsonl
+    stats_filename: dataset_stats.json
+  puzzles:
+    persistent_bank_filename: puzzle_bank.jsonl
+    usage_stats_filename: puzzle_usage.json
+  similarity:
+    max_history: 5000
+    ngram_size: 3
+    exact_duplicate_threshold: 1.0
+    normalized_duplicate_threshold: 1.0
+    ngram_overlap_threshold: 0.92
+    embedding_similarity_threshold: 0.96
+    structural_similarity_threshold: 0.97
+    scenario_similarity_threshold: 0.95
+    puzzle_similarity_threshold: 1.0
+    related_puzzle_similarity: 0.35
+    related_edge_case_puzzle_similarity: 0.55
+  scenario:
+    task_categories:
+      - next_best_move
+      - validity_check
+      - rules_explanation
+      - solve_puzzle
+      - solve_row_column_box
+      - hint
+      - mistake_correction
+      - technique_discussion
+      - beginner_question
+      - advanced_question
+      - general_chat
+    difficulty_levels:
+      - easy
+      - medium
+      - hard
+      - expert
+    user_expertise_levels:
+      - beginner
+      - intermediate
+      - advanced
+      - expert
+    user_personalities:
+      - careful
+      - impatient
+      - curious
+      - skeptical
+      - analytical
+    assistant_styles:
+      - concise
+      - coaching
+      - explanatory
+      - Socratic
+      - supportive
+    tones:
+      - neutral
+      - friendly
+      - urgent
+      - frustrated
+      - academic
+    edge_cases:
+      - none
+      - incorrect_assumption
+      - invalid_board
+      - ambiguous_board
+      - unsolvable_board
+      - malformed_input
+    tool_usage_modes:
+      - none
+      - candidate_scan
+      - row_column_box_check
+      - solution_verification
