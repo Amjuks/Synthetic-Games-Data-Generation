@@ -33,17 +33,36 @@ def get_config() -> dict[str, Any]:
         model_config["model_name"] = get_env_or_default("CUSTOM_MODEL", model_config.get("model_name", "gpt-oss-120b"))
         model_config["temperature"] = _get_float_env("CUSTOM_TEMPERATURE", model_config.get("temperature", 0.1))
         model_config["max_tokens"] = _get_int_env("CUSTOM_MAX_TOKENS", model_config.get("max_tokens", 800))
+        model_config["timeout"] = _get_float_env("CUSTOM_TIMEOUT", model_config.get("timeout", 60))
         model_config["reasoning"] = get_env_or_default("CUSTOM_REASONING", model_config.get("reasoning", "Low"))
         model_config["enable_thinking"] = _get_bool_env(
             "CUSTOM_ENABLE_THINKING",
             model_config.get("enable_thinking", False),
         )
+    elif provider == "tensorstudio":
+        model_config["api_key"] = get_env_or_default("TENSORSTUDIO_API_KEY", model_config.get("api_key"))
+        model_config["endpoint"] = get_env_or_default(
+            "TENSORSTUDIO_API_URL",
+            model_config.get("endpoint", "https://api.tensorstudio.ai/v1/chat/completions"),
+        )
+        model_config["model_name"] = get_env_or_default(
+            "TENSORSTUDIO_MODEL",
+            model_config.get("model_name", "glm-5.2-fp8"),
+        )
+        model_config["temperature"] = _get_float_env(
+            "TENSORSTUDIO_TEMPERATURE",
+            model_config.get("temperature", 0.8),
+        )
+        model_config["max_tokens"] = _get_int_env("TENSORSTUDIO_MAX_TOKENS", model_config.get("max_tokens", 800))
+        model_config["timeout"] = _get_float_env("TENSORSTUDIO_TIMEOUT", model_config.get("timeout", 300))
+        model_config["session_id"] = get_env_or_default("TENSORSTUDIO_SESSION_ID", model_config.get("session_id"))
     else:
         model_config["api_key"] = get_env_or_default("OPENAI_API_KEY", model_config.get("api_key"))
         model_config["base_url"] = get_env_or_default("OPENAI_BASE_URL", model_config.get("base_url"))
         model_config["model_name"] = get_env_or_default("OPENAI_MODEL", model_config.get("model_name", "gpt-4o-mini"))
         model_config["temperature"] = _get_float_env("OPENAI_TEMPERATURE", model_config.get("temperature", 0.8))
         model_config["max_tokens"] = _get_int_env("OPENAI_MAX_TOKENS", model_config.get("max_tokens", 800))
+        model_config["timeout"] = _get_float_env("OPENAI_TIMEOUT", model_config.get("timeout", 60))
     config["model"] = model_config
     config["prompts"] = prompts
     config["root_dir"] = str(ROOT)

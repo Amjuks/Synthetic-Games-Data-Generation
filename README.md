@@ -16,7 +16,7 @@ Key features:
 - Validates generated outputs before accepting them.
 - Rejects overly similar samples and stores rejected attempts for inspection.
 - Writes outputs incrementally and can resume interrupted jobs.
-- Supports `openai`, `custom_chat`, and mock generation modes.
+- Supports `openai`, `custom_chat`, `tensorstudio`, and mock generation modes.
 
 ## Setup Instructions
 ### Prerequisites
@@ -25,6 +25,7 @@ Key features:
 - One of the following model backends:
   - OpenAI API
   - A compatible custom chat-completions endpoint
+  - TensorStudio chat-completions API
   - No external API for mock generation
 
 ### Dependencies
@@ -62,7 +63,7 @@ The project loads `.env` automatically from the repository root.
 
 | Name | Description | Type | Default | Allowed values | Required |
 |---|---|---:|---|---|---|
-| `MODEL_PROVIDER` | Selects the model backend. | string | `openai` | `openai`, `custom_chat` | Optional |
+| `MODEL_PROVIDER` | Selects the model backend. | string | `openai` | `openai`, `custom_chat`, `tensorstudio` | Optional |
 
 #### OpenAI settings
 
@@ -73,6 +74,7 @@ The project loads `.env` automatically from the repository root.
 | `OPENAI_BASE_URL` | Override base URL for the OpenAI client. | string | none | valid URL | Optional |
 | `OPENAI_TEMPERATURE` | Sampling temperature. | float | `0.8` | provider-dependent | Optional |
 | `OPENAI_MAX_TOKENS` | Maximum output tokens. | int | `800` | positive integers | Optional |
+| `OPENAI_TIMEOUT` | Request timeout in seconds. | float | `60` | positive numbers | Optional |
 
 #### Custom chat-completions settings
 
@@ -83,8 +85,21 @@ The project loads `.env` automatically from the repository root.
 | `CUSTOM_MODEL` | Model name sent to the custom endpoint. | string | `gpt-oss-120b` | any endpoint-supported model | Optional |
 | `CUSTOM_TEMPERATURE` | Sampling temperature. | float | `0.1` | endpoint-dependent | Optional |
 | `CUSTOM_MAX_TOKENS` | Maximum tokens sent as `max_tokens`. | int | `800` | positive integers | Optional |
+| `CUSTOM_TIMEOUT` | Request timeout in seconds. | float | `60` | positive numbers | Optional |
 | `CUSTOM_REASONING` | Included in the system message as `Reasoning: ...`. | string | `Low` | any string | Optional |
 | `CUSTOM_ENABLE_THINKING` | Sent under `chat_template_kwargs.enable_thinking`. | bool | `false` | `true`, `false`, `1`, `0`, `yes`, `no`, `on`, `off` | Optional |
+
+#### TensorStudio chat-completions settings
+
+| Name | Description | Type | Default | Allowed values | Required |
+|---|---|---:|---|---|---|
+| `TENSORSTUDIO_API_URL` | TensorStudio chat-completions endpoint URL. | string | `https://api.tensorstudio.ai/v1/chat/completions` | valid URL | Optional |
+| `TENSORSTUDIO_API_KEY` | Bearer token for TensorStudio. | string | none | any valid token | Required for `tensorstudio` |
+| `TENSORSTUDIO_MODEL` | Model name sent to TensorStudio. | string | `glm-5.2-fp8` | any TensorStudio-supported model | Optional |
+| `TENSORSTUDIO_TEMPERATURE` | Sampling temperature. | float | `0.8` | provider-dependent | Optional |
+| `TENSORSTUDIO_MAX_TOKENS` | Maximum tokens sent as `max_tokens`. | int | `800` | positive integers | Optional |
+| `TENSORSTUDIO_TIMEOUT` | Request timeout in seconds. TensorStudio can be slower for large generations. | float | `300` | positive numbers | Optional |
+| `TENSORSTUDIO_SESSION_ID` | Optional value sent as `metadata.session_id`. | string | none | any string | Optional |
 
 ### Configuration Files
 - [config/defaults.yaml](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/config/defaults.yaml): runtime defaults for generation, similarity, puzzles, and storage.
@@ -165,6 +180,7 @@ The following sections are read from [config/defaults.yaml](C:/Users/emertxe-87/
 | `model_name` | Default model name before env overrides. | string | `gpt-4o-mini` | backend-specific | Optional |
 | `temperature` | Default temperature before env overrides. | float | `0.8` | backend-specific | Optional |
 | `max_tokens` | Default token limit before env overrides. | int | `800` | positive integers | Optional |
+| `timeout` | Default request timeout in seconds before provider-specific env overrides. | float | `60` | positive numbers | Optional |
 
 #### `storage`
 
@@ -236,6 +252,28 @@ python -m src.generator.cli run --domain sudoku --samples 50 --conversation-type
 ```
 
 Useful when you want only multi-turn data and want scenarios to be allowed up to eight exchanges.
+
+#### Run with TensorStudio
+
+Set these values in `.env`:
+
+```dotenv
+MODEL_PROVIDER=tensorstudio
+TENSORSTUDIO_API_URL=https://api.tensorstudio.ai/v1/chat/completions
+TENSORSTUDIO_API_KEY=your_tensorstudio_api_key_here
+TENSORSTUDIO_MODEL=glm-5.2-fp8
+TENSORSTUDIO_MAX_TOKENS=800
+TENSORSTUDIO_TIMEOUT=300
+TENSORSTUDIO_SESSION_ID=sudoku-generation
+```
+
+Then run:
+
+```bash
+python -m src.generator.cli run --domain sudoku --samples 10 --job-name tensorstudio_test
+```
+
+Use this when you want to generate through TensorStudio's OpenAI-style chat-completions endpoint instead of the OpenAI Responses API or the custom local chat endpoint.
 
 #### Resume an interrupted job
 

@@ -13,6 +13,7 @@ class ModelClient:
         self.base_url = config.get("base_url")
         self.endpoint = config.get("endpoint")
         self.provider = config.get("provider", "openai")
+        self.timeout = config.get("timeout", 60)
 
     def generate(self, prompt: str) -> str:
         if self.provider == "openai" and self.api_key:
@@ -20,6 +21,9 @@ class ModelClient:
 
         if self.provider == "custom_chat" and self.endpoint:
             return self._custom_chat_generate(prompt)
+
+        if self.provider == "tensorstudio" and self.endpoint:
+            return self._tensorstudio_generate(prompt)
 
         if not self.endpoint:
             return self._mock_generate(prompt)
@@ -32,7 +36,7 @@ class ModelClient:
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": self.config.get("temperature", 0.8),
             },
-            timeout=60,
+            timeout=self.timeout,
         )
         response.raise_for_status()
         payload = response.json()
@@ -47,6 +51,8 @@ class ModelClient:
         client_kwargs: dict[str, Any] = {"api_key": self.api_key}
         if self.base_url:
             client_kwargs["base_url"] = self.base_url
+        if self.timeout:
+            client_kwargs["timeout"] = self.timeout
 
         client = OpenAI(**client_kwargs)
         request_kwargs: dict[str, Any] = {
@@ -90,7 +96,39 @@ class ModelClient:
             self.endpoint,
             headers=headers,
             json=payload,
-            timeout=60,
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        body = response.json()
+        return body.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+    def _tensorstudio_generate(self, prompt: str) -> str:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        payload: dict[str, Any] = {
+            "model": self.config.get("model_name", "glm-5.2-fp8"),
+            "messages": [{"role": "user", "content": prompt}],
+        }
+
+        max_tokens = self.config.get("max_tokens")
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+
+        temperature = self.config.get("temperature")
+        if temperature is not None:
+            payload["temperature"] = temperature
+
+        session_id = self.config.get("session_id")
+        if session_id:
+            payload["metadata"] = {"session_id": session_id}
+
+        response = requests.post(
+            self.endpoint,
+            headers=headers,
+            json=payload,
+            timeout=self.timeout,
         )
         response.raise_for_status()
         body = response.json()

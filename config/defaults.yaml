@@ -13,6 +13,7 @@ defaults:
     model_name: gpt-4o-mini
     temperature: 0.8
     max_tokens: 800
+    timeout: 60
   storage:
     metadata_filename: samples.jsonl
     rejected_filename: rejected_samples.jsonl

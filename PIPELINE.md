@@ -158,7 +158,7 @@ Output:
 How it works:
 - Builds a prompt from scenario, puzzle, ground truth, and tool context.
 - Sends it through `ModelClient`.
-- Supports OpenAI, custom chat-completions, and mock fallback behavior.
+- Supports OpenAI, custom chat-completions, TensorStudio chat-completions, and mock fallback behavior.
 - Parses raw JSON, fenced JSON, or embedded JSON.
 - Normalizes single-turn output to `prompt` and `response`.
 - Normalizes multi-turn output to `messages: [{user, response}, ...]`.
