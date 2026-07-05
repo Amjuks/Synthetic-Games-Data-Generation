@@ -8,34 +8,40 @@ from typing import Any
 
 from .config import get_config
 from .diversity import SimilarityDiversityChecker
+from .domains import get_domain_adapter
 from .jobs import JobManager
 from .model_client import ModelClient
 from .models import DatasetSample, PuzzleRecord, Scenario, utc_now_iso
-from .puzzles import PuzzleManager
-from .scenario import ScenarioGenerator
 from .storage import DatasetStorage
-from .validation import SampleValidator
 
 
 class ConversationGenerator:
     def __init__(self, config: dict[str, Any] | None = None):
         self.config = config or get_config()
+        self.domain_name = self.config.get("domain", "sudoku")
+        self.domain = get_domain_adapter(self.domain_name, self.config)
         self.prompts = self.config.get("prompts", {})
         self.model_client = ModelClient(self.config.get("model", {}))
-        self.scenario_generator = ScenarioGenerator(self.config)
-        self.puzzle_manager = PuzzleManager(self.config)
-        self.validator = SampleValidator()
         self.diversity_checker = SimilarityDiversityChecker(self.config)
         self.generation_model = self.config.get("model", {}).get("model_name", "unknown-model")
         self.max_regeneration_attempts = int(self.config.get("generation", {}).get("max_regeneration_attempts", 3))
 
-    def run(self, samples: int, conversation_type: str = "both", max_turns: int = 6, job_name: str | None = None) -> dict[str, Any]:
+    def run(
+        self,
+        samples: int,
+        conversation_type: str = "both",
+        max_turns: int = 6,
+        job_name: str | None = None,
+        domain: str | None = None,
+    ) -> dict[str, Any]:
+        if domain and domain != self.domain_name:
+            raise ValueError(f"Generator was initialized for domain '{self.domain_name}', not '{domain}'.")
         job_manager = JobManager(job_name=job_name, config=self.config)
         status = job_manager.get_status()
         target_total = self._resolve_target_total(status, samples)
-        self._validate_resume_config(status, conversation_type, max_turns)
+        self._validate_resume_config(status, conversation_type, max_turns, self.domain_name)
 
-        storage = DatasetStorage(job_manager.job_dir, self.config)
+        storage = DatasetStorage(job_manager.job_dir, self.config, domain_adapter=self.domain)
         history = storage.get_history()
         distribution_stats = self.diversity_checker.summarize_distribution(history)
         resume_state = job_manager.get_resume_state()
@@ -49,6 +55,7 @@ class ConversationGenerator:
             total=target_total,
             completed=completed,
             current_stage="generating",
+            domain=self.domain_name,
             conversation_type=conversation_type,
             max_turns=max_turns,
             next_sample_index=start_index,
@@ -129,6 +136,7 @@ class ConversationGenerator:
         return {
             "job_name": job_manager.job_name,
             "job_dir": str(job_manager.job_dir),
+            "domain": self.domain_name,
             "completed": completed,
             "total": target_total,
             "accepted_samples": accepted_samples,
@@ -137,25 +145,27 @@ class ConversationGenerator:
         }
 
     def generate_single_turn(self, sample_index: int) -> dict[str, Any]:
-        scenario = self.scenario_generator.generate(
+        scenario = self.domain.generate_scenario(
             sample_index=sample_index,
             conversation_type="single_turn",
             max_turns=1,
             distribution_stats={},
         )
-        puzzle = self.puzzle_manager.select_puzzle(scenario, sample_index)
-        output = self._generate_output(scenario, puzzle)
+        puzzle = self.domain.select_problem(scenario, sample_index)
+        tool_usage = self.domain.maybe_use_tool(scenario, puzzle)
+        output = self._generate_output(scenario, puzzle, tool_usage)
         return output
 
     def generate_multi_turn(self, sample_index: int) -> dict[str, Any]:
-        scenario = self.scenario_generator.generate(
+        scenario = self.domain.generate_scenario(
             sample_index=sample_index,
             conversation_type="multi_turn",
             max_turns=self.config.get("max_turns", 6),
             distribution_stats={},
         )
-        puzzle = self.puzzle_manager.select_puzzle(scenario, sample_index)
-        output = self._generate_output(scenario, puzzle)
+        puzzle = self.domain.select_problem(scenario, sample_index)
+        tool_usage = self.domain.maybe_use_tool(scenario, puzzle)
+        output = self._generate_output(scenario, puzzle, tool_usage)
         return output
 
     def _generate_records_for_index(
@@ -200,15 +210,16 @@ class ConversationGenerator:
         rejection_reasons: list[dict[str, Any]] = []
 
         for attempt in range(self.max_regeneration_attempts):
-            scenario = self.scenario_generator.generate(
+            scenario = self.domain.generate_scenario(
                 sample_index=sample_index * self.max_regeneration_attempts + attempt,
                 conversation_type=generation_type,
                 max_turns=max_turns,
                 distribution_stats=distribution_stats,
             )
-            puzzle = self.puzzle_manager.select_puzzle(scenario, sample_index * self.max_regeneration_attempts + attempt)
-            output = self._generate_output(scenario, puzzle)
-            validation_result = self.validator.validate(output, scenario, puzzle)
+            puzzle = self.domain.select_problem(scenario, sample_index * self.max_regeneration_attempts + attempt)
+            tool_usage = self.domain.maybe_use_tool(scenario, puzzle)
+            output = self._generate_output(scenario, puzzle, tool_usage)
+            validation_result = self.domain.validate(output, scenario, puzzle)
             if not validation_result.is_valid:
                 rejected_count += 1
                 rejection = self._build_rejection_record(
@@ -216,6 +227,7 @@ class ConversationGenerator:
                     attempt=attempt,
                     scenario=scenario,
                     puzzle=puzzle,
+                    tool_usage=tool_usage,
                     output=output,
                     reasons=validation_result.errors,
                     rejection_type="validation",
@@ -228,10 +240,12 @@ class ConversationGenerator:
             sample_id = self._build_sample_id(sample_index, generation_type, scenario, puzzle)
             candidate_sample = DatasetSample.create(
                 sample_id=sample_id,
+                domain=self.domain_name,
                 scenario=scenario,
                 puzzle=puzzle,
                 conversation=conversation,
                 output=output,
+                tool_usage_details=tool_usage,
                 similarity_score=0.0,
                 generation_model=self.generation_model,
                 validation_status="passed",
@@ -245,6 +259,7 @@ class ConversationGenerator:
                     attempt=attempt,
                     scenario=scenario,
                     puzzle=puzzle,
+                    tool_usage=tool_usage,
                     output=output,
                     reasons=similarity_result.reasons,
                     rejection_type="similarity",
@@ -256,7 +271,7 @@ class ConversationGenerator:
 
             candidate_dict["similarity_score"] = similarity_result.similarity_score
             storage.append_sample(candidate_dict)
-            self.puzzle_manager.mark_used(puzzle)
+            self.domain.mark_problem_used(puzzle)
             return candidate_dict, rejected_count
 
         raise RuntimeError(
@@ -264,12 +279,12 @@ class ConversationGenerator:
             f"after {self.max_regeneration_attempts} attempts. Last rejection: {rejection_reasons[-1] if rejection_reasons else 'unknown'}"
         )
 
-    def _generate_output(self, scenario: Scenario, puzzle: PuzzleRecord) -> dict[str, Any]:
-        prompt = self._build_generation_prompt(scenario, puzzle)
+    def _generate_output(self, scenario: Scenario, puzzle: PuzzleRecord, tool_usage: dict[str, Any]) -> dict[str, Any]:
+        prompt = self._build_generation_prompt(scenario, puzzle, tool_usage)
         raw_output = self.model_client.generate(prompt)
         return self._parse_output(raw_output, scenario, puzzle)
 
-    def _build_generation_prompt(self, scenario: Scenario, puzzle: PuzzleRecord) -> str:
+    def _build_generation_prompt(self, scenario: Scenario, puzzle: PuzzleRecord, tool_usage: dict[str, Any]) -> str:
         output_schema = (
             "Return minified JSON with keys: prompt, response, conversation_type, category, board."
             if scenario.conversation_type == "single_turn"
@@ -284,8 +299,11 @@ class ConversationGenerator:
         return (
             f"{self.prompts.get('system_prompt', '')}\n\n"
             f"{prompt_template}\n\n"
+            f"Domain: {self.domain_name}\n\n"
             f"Scenario JSON:\n{json.dumps(scenario.to_dict(), ensure_ascii=False)}\n\n"
             f"Puzzle JSON:\n{json.dumps(puzzle.to_dict(), ensure_ascii=False)}\n\n"
+            f"Ground Truth JSON:\n{json.dumps(puzzle.ground_truth, ensure_ascii=False)}\n\n"
+            f"Tool Context JSON:\n{json.dumps(self.domain.prompt_context(scenario, puzzle, tool_usage), ensure_ascii=False)}\n\n"
             f"Puzzle board:\n{puzzle.rendered_board}\n\n"
             f"Output schema:\n{output_schema}\n"
             "Use the supplied puzzle exactly and never invent or modify the board unless the scenario explicitly requires malformed input.\n"
@@ -406,6 +424,7 @@ class ConversationGenerator:
         attempt: int,
         scenario: Scenario,
         puzzle: PuzzleRecord,
+        tool_usage: dict[str, Any],
         output: dict[str, Any],
         reasons: list[str],
         rejection_type: str,
@@ -415,11 +434,15 @@ class ConversationGenerator:
             "timestamp": utc_now_iso(),
             "sample_index": sample_index,
             "attempt": attempt,
+            "domain": self.domain_name,
             "rejection_type": rejection_type,
             "reasons": reasons,
             "metrics": metrics or {},
             "scenario": scenario.to_dict(),
             "puzzle_metadata": puzzle.to_dict(),
+            "ground_truth": puzzle.ground_truth,
+            "tool_used": bool(tool_usage.get("used", False)),
+            "tool_usage_details": tool_usage,
             "output": output,
         }
 
@@ -429,7 +452,13 @@ class ConversationGenerator:
             return existing_total
         return requested_samples
 
-    def _validate_resume_config(self, status: dict[str, Any], conversation_type: str, max_turns: int) -> None:
+    def _validate_resume_config(self, status: dict[str, Any], conversation_type: str, max_turns: int, domain: str) -> None:
+        existing_domain = status.get("domain")
+        if existing_domain and existing_domain != domain:
+            raise ValueError(
+                f"Job '{status.get('job_name')}' was started with domain='{existing_domain}', not '{domain}'."
+            )
+
         existing_conversation_type = status.get("conversation_type")
         if existing_conversation_type and existing_conversation_type != conversation_type:
             raise ValueError(

@@ -41,4 +41,11 @@ class SampleValidator:
         if scenario.edge_case == "none" and not puzzle.unique_solution_status:
             errors.append("standard scenario received non-unique puzzle")
 
+        ground_truth = puzzle.ground_truth
+        if ground_truth:
+            if ground_truth.get("solution") != puzzle.solution:
+                errors.append("ground truth solution does not match puzzle solution")
+            if scenario.edge_case == "none" and ground_truth.get("validity_status") != "valid":
+                errors.append("standard scenario has invalid ground truth status")
+
         return ValidationResult(is_valid=not errors, errors=errors)

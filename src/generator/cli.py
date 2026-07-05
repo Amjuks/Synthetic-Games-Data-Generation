@@ -18,6 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--conversation-type", choices=["single_turn", "multi_turn", "both"], default=None)
     run_parser.add_argument("--max-turns", type=int, default=None)
     run_parser.add_argument("--job-name", default=None)
+    run_parser.add_argument("--domain", default=None)
 
     status_parser = subparsers.add_parser("status", help="Check progress for a job")
     status_parser.add_argument("--job-name", required=False)
@@ -35,12 +36,15 @@ def main() -> None:
         samples = args.samples or config.get("samples", 10)
         conversation_type = args.conversation_type or config.get("conversation_type", "both")
         max_turns = args.max_turns or config.get("max_turns", 6)
+        domain = args.domain or config.get("domain", "sudoku")
+        config["domain"] = domain
         generator = ConversationGenerator(config)
         result = generator.run(
             samples=samples,
             conversation_type=conversation_type,
             max_turns=max_turns,
             job_name=args.job_name,
+            domain=domain,
         )
         print(json.dumps(result, indent=2, sort_keys=True))
 

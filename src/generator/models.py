@@ -45,6 +45,7 @@ class PuzzleRecord:
     parent_puzzle_id: str | None = None
     transformation: str = "identity"
     rendered_board: str = ""
+    ground_truth: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -74,6 +75,7 @@ class SimilarityResult:
 @dataclass
 class DatasetSample:
     sample_id: str
+    domain: str
     scenario_id: str
     puzzle_id: str
     parent_puzzle_id: str | None
@@ -87,6 +89,9 @@ class DatasetSample:
     validation_status: str
     scenario: dict[str, Any]
     puzzle_metadata: dict[str, Any]
+    ground_truth: dict[str, Any]
+    tool_used: bool
+    tool_usage_details: dict[str, Any]
     conversation: dict[str, Any]
     output: dict[str, Any]
     edge_case: str
@@ -100,10 +105,12 @@ class DatasetSample:
         cls,
         *,
         sample_id: str,
+        domain: str,
         scenario: Scenario,
         puzzle: PuzzleRecord,
         conversation: dict[str, Any],
         output: dict[str, Any],
+        tool_usage_details: dict[str, Any],
         similarity_score: float,
         generation_model: str,
         validation_status: str,
@@ -111,6 +118,7 @@ class DatasetSample:
         turns = len(output.get("messages", [])) if output.get("conversation_type") == "multi_turn" else 1
         return cls(
             sample_id=sample_id,
+            domain=domain,
             scenario_id=scenario.scenario_id,
             puzzle_id=puzzle.puzzle_id,
             parent_puzzle_id=puzzle.parent_puzzle_id,
@@ -124,6 +132,9 @@ class DatasetSample:
             validation_status=validation_status,
             scenario=scenario.to_dict(),
             puzzle_metadata=puzzle.to_dict(),
+            ground_truth=puzzle.ground_truth,
+            tool_used=bool(tool_usage_details.get("used", False)),
+            tool_usage_details=tool_usage_details,
             conversation=conversation,
             output=output,
             edge_case=scenario.edge_case,

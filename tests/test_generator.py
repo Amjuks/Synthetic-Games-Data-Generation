@@ -130,13 +130,13 @@ def test_single_turn_parses_fenced_json_payload(tmp_path):
         }
     )
 
-    scenario = generator.scenario_generator.generate(
+    scenario = generator.domain.generate_scenario(
         sample_index=0,
         conversation_type="single_turn",
         max_turns=1,
         distribution_stats={},
     )
-    puzzle = generator.puzzle_manager.select_puzzle(scenario, 0)
+    puzzle = generator.domain.select_problem(scenario, 0)
     output = generator._parse_output(
         """```json
 {"prompt":"Is r1c1 valid?","response":"No, because of the column.","conversation_type":"single_turn","category":"next_best_move","board":"BOARD"}
@@ -147,6 +147,44 @@ def test_single_turn_parses_fenced_json_payload(tmp_path):
 
     assert output["prompt"] == "Is r1c1 valid?"
     assert output["response"] == "No, because of the column."
+
+
+def test_generated_sample_includes_domain_ground_truth_and_tool_usage(tmp_path):
+    config = make_config(str(tmp_path))
+    generator = ConversationGenerator(config)
+    generator.model_client = IndexedModelClient(
+        {
+            0: {
+                "conversation_type": "single_turn",
+                "category": "next_best_move",
+                "prompt": "P0",
+                "response": "R0",
+            }
+        }
+    )
+
+    result = generator.run(samples=1, conversation_type="single_turn", job_name="domain-job")
+
+    metadata_path = tmp_path / "domain-job" / "samples.jsonl"
+    sample = json.loads(metadata_path.read_text(encoding="utf-8").splitlines()[0])
+
+    assert result["domain"] == "sudoku"
+    assert sample["domain"] == "sudoku"
+    assert sample["ground_truth"]["solution"]
+    assert "validity_status" in sample["ground_truth"]
+    assert isinstance(sample["tool_used"], bool)
+    assert "tool_name" in sample["tool_usage_details"]
+
+
+def test_unsupported_domain_fails_clearly(tmp_path):
+    config = make_config(str(tmp_path)) | {"domain": "wordle"}
+
+    try:
+        ConversationGenerator(config)
+    except ValueError as exc:
+        assert "Unsupported domain 'wordle'" in str(exc)
+    else:
+        raise AssertionError("Expected unsupported domain to fail")
 
 
 def test_run_writes_metadata_and_csv_incrementally(tmp_path):

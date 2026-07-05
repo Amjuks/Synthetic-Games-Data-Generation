@@ -8,9 +8,10 @@ from .exporters import append_csv_row
 
 
 class DatasetStorage:
-    def __init__(self, job_dir: Path, config: dict[str, Any]):
+    def __init__(self, job_dir: Path, config: dict[str, Any], domain_adapter: Any | None = None):
         storage_config = config.get("storage", {})
         self.job_dir = job_dir
+        self.domain_adapter = domain_adapter
         self.metadata_path = job_dir / storage_config.get("metadata_filename", "samples.jsonl")
         self.rejected_path = job_dir / storage_config.get("rejected_filename", "rejected_samples.jsonl")
         self.stats_path = job_dir / storage_config.get("stats_filename", "dataset_stats.json")
@@ -49,6 +50,7 @@ class DatasetStorage:
         output = sample.get("output", {})
         row = {
             "sample_id": sample.get("sample_id"),
+            "domain": sample.get("domain", "sudoku"),
             "scenario_id": sample.get("scenario_id"),
             "puzzle_id": sample.get("puzzle_id"),
             "parent_puzzle_id": sample.get("parent_puzzle_id"),
@@ -63,6 +65,8 @@ class DatasetStorage:
             "user_expertise": sample.get("user_expertise"),
             "assistant_style": sample.get("assistant_style"),
             "tool_usage": sample.get("tool_usage"),
+            "tool_used": sample.get("tool_used", False),
+            "tool_name": sample.get("tool_usage_details", {}).get("tool_name"),
             "board": output.get("board", ""),
         }
         if output.get("conversation_type") == "multi_turn":
@@ -72,6 +76,8 @@ class DatasetStorage:
             row["conversation_type"] = "single_turn"
             row["prompt"] = output.get("prompt", "")
             row["response"] = output.get("response", "")
+        if self.domain_adapter is not None:
+            row = self.domain_adapter.flatten_sample_row(row, sample)
         return row
 
     def _update_stats(self, sample: dict[str, Any]) -> None:
@@ -84,6 +90,10 @@ class DatasetStorage:
         self._increment_nested("tone_distribution", scenario.get("tone", "unknown"))
         self._increment_nested("edge_case_distribution", scenario.get("edge_case", "unknown"))
         self._increment_nested("tool_usage_distribution", scenario.get("tool_usage", "unknown"))
+        self._increment_nested("tool_used_distribution", str(bool(sample.get("tool_used", False))).lower())
+        tool_name = sample.get("tool_usage_details", {}).get("tool_name") or "none"
+        self._increment_nested("tool_name_distribution", tool_name)
+        self._increment_nested("domain_distribution", sample.get("domain", "unknown"))
         self._increment_nested("puzzle_reuse_distribution", sample.get("parent_puzzle_id") or sample.get("puzzle_id", "unknown"))
         self._increment_nested("conversation_type_distribution", sample.get("conversation_type", "unknown"))
         self._increment_nested("conversation_length_distribution", str(sample.get("turns", 0)))

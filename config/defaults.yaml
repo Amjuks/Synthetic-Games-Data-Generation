@@ -1,5 +1,6 @@
 defaults:
   samples: 10
+  domain: sudoku
   conversation_type: both
   max_turns: 6
   output_dir: outputs

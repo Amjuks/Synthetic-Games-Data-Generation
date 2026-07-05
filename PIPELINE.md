@@ -1,155 +1,216 @@
 # Pipeline Internals
 
 ## Pipeline Overview
-The current pipeline is a modular synthetic data generator for Sudoku conversations. It is organized around these stages:
+The generator is now structured as a shared pipeline plus a domain adapter. The shared pipeline handles job execution, retries, model calls, similarity checks, storage, and resume behavior. Domain-specific behavior lives behind `src/generator/domains`.
+
+Only one domain is currently registered:
+- `sudoku`
+
+High-level flow:
 
 ```text
-Scenario Generator
-    -> Puzzle Manager
+Domain Adapter
+    -> Scenario Generator
+    -> Puzzle Manager + Ground Truth
+    -> Tool Usage Stage
     -> LLM Chat Generator
     -> Validator
     -> Similarity & Diversity Checker
     -> Dataset Storage
 ```
 
-The orchestration entry point is [src/generator/generator.py](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/src/generator/generator.py).
+The orchestration entry point is `src/generator/generator.py`.
 
 ## Processing Stages
-### 1. Scenario Generator
+### 1. Domain Adapter
 Implementation:
-- [src/generator/scenario.py](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/src/generator/scenario.py)
+- `src/generator/domains/__init__.py`
+- `src/generator/domains/sudoku.py`
+
+Input:
+- domain name from config or `--domain`
+- shared runtime config
+
+Output:
+- a domain adapter instance
+
+How it works:
+- `get_domain_adapter()` validates the requested domain.
+- Unsupported domains raise a clear `ValueError`.
+- The Sudoku adapter owns scenario generation, puzzle selection, tool decisions, validation, prompt context, and CSV row extensions.
+
+### 2. Scenario Generator
+Implementation:
+- `src/generator/scenario.py`
+- used through `src/generator/domains/sudoku.py`
 
 Input:
 - `sample_index`
 - `conversation_type`
 - `max_turns`
-- current distribution statistics from previously accepted samples
+- current distribution statistics
 
 Output:
-- A `Scenario` dataclass with:
-  - intent
-  - conversation type
-  - turn count
-  - expertise
-  - personality
-  - assistant style
-  - tone
-  - difficulty
-  - task category
-  - edge case
-  - tool usage
-  - constraints
+- `Scenario`
 
 How it works:
-- Reads candidate pools from `config.defaults.scenario`.
-- Uses a deterministic `random_seed`.
-- Prefers underrepresented values by selecting from the lowest-count bucket in each distribution.
-- Derives `user_intent` from `task_category` and `edge_case`.
-- Adds behavioral constraints, such as correcting incorrect assumptions politely or acknowledging malformed input.
+- Reads candidate pools from `config/defaults.yaml`.
+- Uses deterministic seeded selection.
+- Favors underrepresented distribution buckets.
+- Produces task category, difficulty, edge case, persona, tone, assistant style, tool usage label, and constraints.
 
-### 2. Puzzle Manager
+### 3. Puzzle Manager And Ground Truth
 Implementation:
-- [src/generator/puzzles.py](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/src/generator/puzzles.py)
+- `src/generator/puzzles.py`
+- used through `src/generator/domains/sudoku.py`
 
 Input:
-- A generated `Scenario`
+- `Scenario`
 - `sample_index`
 
 Output:
-- A `PuzzleRecord` dataclass
+- `PuzzleRecord`
+- `PuzzleRecord.ground_truth`
 
 How it works:
-- Loads a built-in puzzle bank in memory.
-- Persists the bank to `puzzle_bank.jsonl` if it does not already exist.
-- Tracks usage counts in `puzzle_usage.json`.
-- Filters candidates by scenario difficulty when possible.
-- Prefers puzzles with lower usage counts and lower parent usage.
+- Starts from the built-in Sudoku puzzle bank.
+- Selects a puzzle matching scenario difficulty when possible.
+- Prefers low-usage puzzles.
+- Creates transformed or edge-case variants.
+- Builds deterministic ground truth for every puzzle variant.
 
-Current puzzle sources:
-- Built-in base puzzle bank only
+Ground truth currently includes:
+- complete solution string
+- rendered solved board
+- validity status
+- solvability status
+- unique-solution status
+- number of given and empty cells
+- given cell positions
+- empty cell positions
+- candidate map
+- conflicts
+- suggested move when available
 
-Important limitation:
-- The current code does not yet import curated external puzzle datasets, even though the architecture leaves room for it.
+Current transformations:
+- identity
+- digit relabeling
+- row swaps within bands
+- column swaps within stacks
+- band swaps
+- stack swaps
+- rotation
+- horizontal reflection
 
-### 3. LLM Chat Generator
+Current edge-case variants:
+- malformed input
+- invalid board
+- unsolvable board
+- ambiguous board
+
+### 4. Tool Usage Stage
 Implementation:
-- [src/generator/generator.py](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/src/generator/generator.py)
-- [src/generator/model_client.py](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/src/generator/model_client.py)
+- `src/generator/domains/sudoku.py`
 
 Input:
-- Prompt template from `config/prompts.yaml`
 - `Scenario`
 - `PuzzleRecord`
+- puzzle ground truth
+
+Output:
+- tool usage dictionary
+
+How it works:
+- Tool usage is decided by the Sudoku adapter.
+- If no tool is required, the sample records `used: false`.
+- If a tool is required, the sample records tool name, input, output, and reason.
+
+Current Sudoku tools:
+- `sudoku_candidate_scan`
+- `sudoku_board_validation`
+- `sudoku_solution_verification`
+
+Tool output is included in:
+- prompt context sent to the model
+- accepted sample metadata
+- rejected sample records
+- CSV output columns
+- dataset statistics
+
+### 5. LLM Chat Generator
+Implementation:
+- `src/generator/generator.py`
+- `src/generator/model_client.py`
+
+Input:
+- prompt templates from `config/prompts.yaml`
+- domain name
+- scenario JSON
+- puzzle JSON
+- ground-truth JSON
+- tool-context JSON
+- rendered board
 - output schema instructions
 
 Output:
-- Raw model text, then normalized output dict
+- normalized model output
 
 How it works:
-- Builds a generation prompt containing:
-  - system prompt
-  - conversation-type prompt
-  - serialized scenario JSON
-  - serialized puzzle JSON
-  - rendered puzzle board
-  - output schema instructions
-- Sends the prompt through `ModelClient`.
-- Supports:
-  - OpenAI Responses API
-  - a custom chat-completions endpoint
-  - a local mock fallback
+- Builds a prompt from scenario, puzzle, ground truth, and tool context.
+- Sends it through `ModelClient`.
+- Supports OpenAI, custom chat-completions, and mock fallback behavior.
+- Parses raw JSON, fenced JSON, or embedded JSON.
+- Normalizes single-turn output to `prompt` and `response`.
+- Normalizes multi-turn output to `messages: [{user, response}, ...]`.
 
-Normalization behavior:
-- Attempts to parse raw JSON
-- Also extracts fenced JSON blocks such as ```` ```json ... ``` ````
-- Falls back to treating the entire raw output as text if parsing fails
-- Normalizes multi-turn outputs to `messages: [{user, response}, ...]`
-- Normalizes single-turn outputs to `prompt` and `response`
-
-### 4. Validator
+### 6. Validator
 Implementation:
-- [src/generator/validation.py](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/src/generator/validation.py)
+- `src/generator/validation.py`
+- used through `src/generator/domains/sudoku.py`
 
 Input:
-- Normalized output
+- normalized output
 - `Scenario`
 - `PuzzleRecord`
+- puzzle ground truth
 
 Output:
 - `ValidationResult`
 
 Current checks:
-- `conversation_type` matches the scenario
-- `category` matches the scenario task category
+- conversation type matches the scenario
+- category matches the scenario task category
 - required prompt/response fields are present
 - multi-turn messages are non-empty
-- output board matches the selected puzzle except for `malformed_input`
+- output board matches the selected puzzle except for malformed input
 - standard scenarios do not use non-unique puzzle variants
+- ground-truth solution matches the puzzle solution
+- standard scenarios have valid ground-truth status
 
-Important limitation:
-- The validator does not currently solve puzzles or mathematically verify Sudoku reasoning. It validates structure and consistency against the supplied puzzle object.
+Known limitation:
+- The validator does not yet perform full solver-backed reasoning verification.
 
-### 5. Similarity & Diversity Checker
+### 7. Similarity And Diversity Checker
 Implementation:
-- [src/generator/diversity.py](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/src/generator/diversity.py)
+- `src/generator/diversity.py`
 
 Input:
-- Candidate sample
-- Accepted sample history
+- candidate sample
+- accepted sample history
 
 Output:
 - `SimilarityResult`
 
-Current similarity checks:
+Current checks:
 - exact duplicate text
-- normalized text duplicate
+- normalized duplicate text
 - n-gram overlap
 - token-vector cosine similarity
 - structural similarity
 - scenario similarity
 - puzzle similarity
 
-Current diversity tracking:
+Current diversity metrics:
 - task distribution
 - difficulty distribution
 - conversation length distribution
@@ -161,167 +222,127 @@ Current diversity tracking:
 - tool usage distribution
 - puzzle reuse distribution
 
-Important limitation:
-- The “embedding similarity” metric is not a real embedding model today. It is a token-frequency cosine similarity proxy implemented locally.
+Known limitation:
+- The `embedding_similarity` metric is a local token-vector cosine proxy, not a neural embedding model.
 
-### 6. Dataset Storage
+### 8. Dataset Storage
 Implementation:
-- [src/generator/storage.py](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/src/generator/storage.py)
-- [src/generator/exporters.py](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/src/generator/exporters.py)
+- `src/generator/storage.py`
+- `src/generator/exporters.py`
 
 Input:
-- Accepted sample dicts
-- Rejected sample dicts
+- accepted sample records
+- rejected sample records
 
 Output:
-- JSONL metadata files
-- CSV exports
-- aggregate stats
+- `samples.jsonl`
+- `rejected_samples.jsonl`
+- `dataset_stats.json`
+- `single_turn.csv`
+- `multi_turn.csv`
 
 How it works:
-- Appends accepted samples to `samples.jsonl`
-- Appends rejected attempts to `rejected_samples.jsonl`
-- Writes flattened accepted rows immediately to `single_turn.csv` or `multi_turn.csv`
-- Updates `dataset_stats.json` incrementally
+- Appends accepted records to JSONL.
+- Appends rejected attempts to JSONL.
+- Writes accepted rows incrementally to CSV.
+- Includes domain, tool usage, ground truth, scenario, puzzle metadata, and output payloads in JSONL records.
+- Lets the domain adapter extend flattened CSV rows.
 
 ## Sample Generation
-### Conversation types
-The generator supports:
+### Conversation Types
+Supported values:
 - `single_turn`
 - `multi_turn`
 - `both`
 
 For `both`, each `sample_index` attempts one single-turn sample and one multi-turn sample.
 
-### Scenario diversity logic
-Scenario diversity is not left entirely to the LLM. It is driven by backend selection logic:
-- underrepresented categories are favored
-- expertise, tone, personality, and assistant style are varied
-- edge cases are injected from config
-- tool-usage labels are varied
+### Grounded Generation
+The model is not treated as the source of Sudoku truth. The prompt includes deterministic puzzle ground truth and any required tool output before the model generates the conversation.
 
-### Puzzle variant creation
-The puzzle manager creates variants from base puzzles using:
-- identity
-- digit relabeling
-- row swaps within bands
-- column swaps within stacks
-- band swaps
-- stack swaps
-- rotation
-- horizontal reflection
+### Tool-Driven Variants
+Sudoku tool usage is scenario-driven:
+- candidate or next-move tasks use candidate scan output
+- board validity tasks use validation/conflict output
+- solution or mistake-correction tasks use solution verification output
+- scenarios without a tool need record `used: false`
 
-It also creates special edge-case variants:
-- malformed input
-- invalid board
-- unsolvable board
-- ambiguous board
-
-Each variant keeps:
-- `puzzle_id`
-- `parent_puzzle_id`
-- `canonical_signature`
-- transformation metadata
-
-### Regeneration logic
-If a sample fails validation or similarity checks:
-1. The rejection is written to `rejected_samples.jsonl`
-2. The pipeline retries with a new scenario/puzzle attempt
-3. Retries continue up to `generation.max_regeneration_attempts`
-4. If all attempts fail, the job raises a `RuntimeError` and records the traceback in `progress.json`
-
-### Randomization and determinism
-The code uses deterministic seeds derived from:
-- `generation.random_seed`
-- `sample_index`
-- conversation type
-
-This means results are varied but still reproducible from the same code, config, and provider behavior.
+### Retry And Rejection
+If validation or similarity checking fails:
+1. The rejected attempt is written to `rejected_samples.jsonl`.
+2. The pipeline tries another scenario/puzzle attempt.
+3. Attempts continue up to `generation.max_regeneration_attempts`.
+4. If every attempt fails, the job is marked failed in `progress.json`.
 
 ## Execution Flow
-### End-to-end lifecycle
-1. CLI loads configuration from YAML and `.env`
-2. `ConversationGenerator` initializes all pipeline components
-3. `JobManager` creates or resumes a job directory
-4. `DatasetStorage` loads accepted and rejected history
-5. The diversity checker summarizes existing distribution stats
-6. For each pending `sample_index`:
-   - generate one or more scenarios
-   - select puzzles
-   - build prompts
-   - call the model
-   - parse and normalize the output
-   - validate the sample
-   - compare it against prior accepted history
-   - store accepted or rejected results
-   - update progress
-7. On success, the job is marked `completed`
-8. On interruption or failure, the job writes the latest state so it can resume later
-
-### Mermaid flow diagram
 ```mermaid
 flowchart TD
-    A[CLI run command] --> B[Load config and .env]
-    B --> C[Initialize ConversationGenerator]
-    C --> D[Load or create JobManager state]
-    D --> E[Load accepted and rejected history]
-    E --> F[Summarize distribution stats]
-    F --> G[Generate scenario]
-    G --> H[Select puzzle]
-    H --> I[Build prompt]
-    I --> J[Call model provider]
-    J --> K[Parse and normalize output]
-    K --> L[Validate sample]
-    L -->|invalid| M[Store rejection]
-    M --> G
-    L -->|valid| N[Similarity and diversity check]
-    N -->|too similar| M
-    N -->|accepted| O[Append JSONL and CSV]
-    O --> P[Update usage stats and progress]
-    P --> Q{More samples?}
-    Q -->|yes| G
-    Q -->|no| R[Mark job completed]
+    A[CLI run command] --> B[Load YAML config and .env]
+    B --> C[Resolve domain adapter]
+    C --> D[Initialize ConversationGenerator]
+    D --> E[Load or create JobManager state]
+    E --> F[Load accepted and rejected history]
+    F --> G[Summarize distribution stats]
+    G --> H[Generate scenario]
+    H --> I[Select puzzle and build ground truth]
+    I --> J[Decide and run domain tool]
+    J --> K[Build prompt with ground truth and tool context]
+    K --> L[Call model provider]
+    L --> M[Parse and normalize output]
+    M --> N[Validate sample]
+    N -->|invalid| O[Store rejection]
+    O --> H
+    N -->|valid| P[Similarity and diversity check]
+    P -->|too similar| O
+    P -->|accepted| Q[Append JSONL and CSV]
+    Q --> R[Update usage stats and progress]
+    R --> S{More samples?}
+    S -->|yes| H
+    S -->|no| T[Mark job completed]
 ```
 
+Lifecycle summary:
+1. CLI loads config and env settings.
+2. The requested domain is resolved.
+3. Job state is created or resumed.
+4. Existing accepted and rejected records are loaded.
+5. Each pending sample index flows through scenario, puzzle, ground truth, tool, model, validation, similarity, and storage stages.
+6. Progress is updated after each sample index.
+7. Failures and interruptions preserve resume state.
+
 ## Extensibility
-### Add a new stage
-The orchestration is centralized in [src/generator/generator.py](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/src/generator/generator.py). To add a new stage:
-1. Create a dedicated module in `src/generator/`
-2. Instantiate it in `ConversationGenerator.__init__`
-3. Call it from `_generate_validated_sample` or another suitable orchestration point
-4. Extend metadata and tests as needed
+### Add A New Domain
+1. Create a new adapter under `src/generator/domains/`.
+2. Implement scenario generation, problem selection, tool decision/execution, validation, prompt context, and CSV row formatting.
+3. Register it in `SUPPORTED_DOMAINS` in `src/generator/domains/__init__.py`.
+4. Add tests for supported and unsupported domain behavior.
+5. Document the new domain in `README.md`.
 
-### Add new scenario dimensions
-Update:
-- `config/defaults.yaml`
-- `src/generator/scenario.py`
-- optionally `src/generator/models.py`
+### Add New Sudoku Tools
+Add the tool decision and execution logic in `SudokuDomainAdapter`.
 
-### Add new puzzle sources
-The current `PuzzleManager` is the right extension point. You could add:
-- external JSONL or CSV import
-- curated dataset ingestion
-- solver-backed uniqueness checks
-- richer difficulty classification
+The expected tool usage record shape is:
 
-### Add new sample types
-Right now the pipeline only supports `single_turn` and `multi_turn`. To add another sample type, you would likely need to update:
-- CLI argument validation
-- scenario generation
-- prompt building
-- output normalization
-- validation
-- CSV flattening
+```json
+{
+  "used": true,
+  "tool_name": "sudoku_candidate_scan",
+  "tool_input": {},
+  "tool_output": {},
+  "reason": "The scenario asks for candidate or next-move guidance."
+}
+```
 
-### Add stronger validation or similarity models
-Natural extension points:
-- `SampleValidator` for rule-based or solver-based checks
-- `SimilarityDiversityChecker` for real embedding services or ANN indexes
+### Add Stronger Ground Truth
+The ground-truth builder lives in `src/generator/puzzles.py`. This is the right place to add solver-backed uniqueness checks, more advanced candidate logic, or task-specific facts.
+
+### Add Stronger Validation
+The validator lives in `src/generator/validation.py` and is invoked through the domain adapter. Solver-backed checks can be added there without changing storage or model code.
 
 ## Known Implementation Boundaries
-These are based directly on the current code:
+- Only the `sudoku` domain is registered.
 - No external puzzle corpus import exists yet.
 - No true Sudoku solver or uniqueness verifier is implemented yet.
-- The “embedding similarity” name currently refers to token-vector cosine similarity, not neural embeddings.
-- There is no concurrency, batching, or distributed job execution in the current implementation.
-- Configuration is YAML plus environment variables only; there is no separate experiment registry or database backend.
+- `embedding_similarity` currently means local token-vector cosine similarity.
+- There is no concurrency, batching, or distributed job execution.
+- Configuration is YAML plus environment variables only.

@@ -164,6 +164,13 @@ class PuzzleManager:
             parent_puzzle_id=parent.puzzle_id,
             transformation=transformation,
             rendered_board=rendered_board or render_board(puzzle_string),
+            ground_truth=build_ground_truth(
+                puzzle_string=puzzle_string,
+                solution_string=solution_string,
+                unique_solution_status=parent.unique_solution_status if unique_solution_status is None else unique_solution_status,
+                rendered_board=rendered_board or render_board(puzzle_string),
+                edge_case_kind=(metadata or {}).get("edge_case_kind"),
+            ),
             metadata=metadata or {},
         )
         return variant
@@ -231,9 +238,134 @@ def _build_base_puzzle_bank() -> list[PuzzleRecord]:
                 canonical_signature=row["puzzle_id"],
                 usage_count=0,
                 rendered_board=render_board(puzzle),
+                ground_truth=build_ground_truth(
+                    puzzle_string=puzzle,
+                    solution_string=row["solution"],
+                    unique_solution_status=True,
+                    rendered_board=render_board(puzzle),
+                ),
             )
         )
     return puzzles
+
+
+def build_ground_truth(
+    *,
+    puzzle_string: str,
+    solution_string: str,
+    unique_solution_status: bool,
+    rendered_board: str,
+    edge_case_kind: str | None = None,
+) -> dict[str, Any]:
+    conflicts = _find_conflicts(puzzle_string)
+    given_cells = _cell_positions(puzzle_string, include_given=True)
+    empty_cells = _cell_positions(puzzle_string, include_given=False)
+    candidates = _candidate_map(puzzle_string)
+    first_empty_cell = empty_cells[0] if empty_cells else None
+    suggested_move = None
+    if first_empty_cell and len(solution_string) == 81:
+        row, col = _parse_cell(first_empty_cell)
+        suggested_move = {
+            "cell": first_empty_cell,
+            "value": solution_string[row * 9 + col],
+            "candidates": candidates.get(first_empty_cell, []),
+        }
+
+    validity_status = "valid" if not conflicts and len(puzzle_string) == 81 else "invalid"
+    solvability_status = "unique" if unique_solution_status else "non_unique_or_invalid"
+    if edge_case_kind == "unsolvable_board":
+        solvability_status = "unsolvable"
+    elif edge_case_kind == "ambiguous_board":
+        solvability_status = "ambiguous"
+    elif edge_case_kind == "malformed_input":
+        validity_status = "malformed"
+        solvability_status = "unknown"
+
+    return {
+        "solved_board": render_board(solution_string),
+        "solution": solution_string,
+        "validity_status": validity_status,
+        "solvability_status": solvability_status,
+        "unique_solution_status": unique_solution_status,
+        "num_given_cells": len(given_cells),
+        "num_empty_cells": len(empty_cells),
+        "given_cells": given_cells,
+        "empty_cells": empty_cells,
+        "candidates": candidates,
+        "conflicts": conflicts,
+        "suggested_move": suggested_move,
+    }
+
+
+def _candidate_map(puzzle_string: str) -> dict[str, list[str]]:
+    if len(puzzle_string) != 81:
+        return {}
+    candidates: dict[str, list[str]] = {}
+    for index, value in enumerate(puzzle_string):
+        if value != "0":
+            continue
+        row, col = divmod(index, 9)
+        used = set()
+        used.update(puzzle_string[row * 9:row * 9 + 9].replace("0", ""))
+        used.update(puzzle_string[col::9].replace("0", ""))
+        box_row, box_col = (row // 3) * 3, (col // 3) * 3
+        for r in range(box_row, box_row + 3):
+            for c in range(box_col, box_col + 3):
+                cell = puzzle_string[r * 9 + c]
+                if cell != "0":
+                    used.add(cell)
+        candidates[_format_cell(row, col)] = [str(num) for num in range(1, 10) if str(num) not in used]
+    return candidates
+
+
+def _find_conflicts(puzzle_string: str) -> list[dict[str, Any]]:
+    if len(puzzle_string) != 81:
+        return [{"type": "length", "message": "Puzzle is not 81 cells long."}]
+    conflicts: list[dict[str, Any]] = []
+    units: list[tuple[str, list[int]]] = []
+    units.extend((f"row_{row + 1}", [row * 9 + col for col in range(9)]) for row in range(9))
+    units.extend((f"col_{col + 1}", [row * 9 + col for row in range(9)]) for col in range(9))
+    for box_row in range(3):
+        for box_col in range(3):
+            indexes = [
+                (box_row * 3 + row) * 9 + (box_col * 3 + col)
+                for row in range(3)
+                for col in range(3)
+            ]
+            units.append((f"box_{box_row + 1}_{box_col + 1}", indexes))
+
+    for unit_name, indexes in units:
+        seen: dict[str, list[str]] = {}
+        for index in indexes:
+            value = puzzle_string[index]
+            if value == "0":
+                continue
+            row, col = divmod(index, 9)
+            seen.setdefault(value, []).append(_format_cell(row, col))
+        for value, cells in seen.items():
+            if len(cells) > 1:
+                conflicts.append({"unit": unit_name, "value": value, "cells": cells})
+    return conflicts
+
+
+def _cell_positions(puzzle_string: str, *, include_given: bool) -> list[str]:
+    if len(puzzle_string) != 81:
+        return []
+    cells: list[str] = []
+    for index, value in enumerate(puzzle_string):
+        is_given = value != "0"
+        if is_given == include_given:
+            row, col = divmod(index, 9)
+            cells.append(_format_cell(row, col))
+    return cells
+
+
+def _format_cell(row: int, col: int) -> str:
+    return f"r{row + 1}c{col + 1}"
+
+
+def _parse_cell(cell: str) -> tuple[int, int]:
+    return int(cell[1]) - 1, int(cell[3]) - 1
 
 
 def _apply_transformation(

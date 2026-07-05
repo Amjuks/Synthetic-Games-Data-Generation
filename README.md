@@ -8,8 +8,11 @@ Primary use case:
 
 Key features:
 - Generates `single_turn`, `multi_turn`, or both conversation types in one run.
+- Supports a domain adapter layer. `sudoku` is the only supported domain today.
 - Uses structured scenarios instead of relying only on LLM creativity.
 - Selects puzzles from a persistent puzzle bank and creates transformed or edge-case variants.
+- Generates deterministic Sudoku ground-truth metadata for each puzzle.
+- Tracks tool usage explicitly for each generated or rejected sample.
 - Validates generated outputs before accepting them.
 - Rejects overly similar samples and stores rejected attempts for inspection.
 - Writes outputs incrementally and can resume interrupted jobs.
@@ -94,14 +97,14 @@ No additional external datasets are required by the current code. The current im
 
 ```bash
 python -m src.generator.cli --help
-python -m src.generator.cli run --samples 5
+python -m src.generator.cli run --domain sudoku --samples 5
 python -m src.generator.cli status --job-name my_job
 ```
 
 The project also exposes a console script from [pyproject.toml](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/pyproject.toml):
 
 ```bash
-sudoku-generator run --samples 5
+sudoku-generator run --domain sudoku --samples 5
 ```
 
 ### Commands
@@ -117,6 +120,7 @@ sudoku-generator run --samples 5
 | Name | Description | Type | Default | Allowed values | Required |
 |---|---|---:|---|---|---|
 | `--samples` | Total sample indexes to process. If resuming a job with a larger existing total, the existing total is preserved. | int | `config.defaults.samples` -> `10` | positive integers | Optional |
+| `--domain` | Generation domain. `sudoku` is currently the only supported domain. | string | `config.defaults.domain` -> `sudoku` | `sudoku` | Optional |
 | `--conversation-type` | Which conversation types to generate. | string | `config.defaults.conversation_type` -> `both` | `single_turn`, `multi_turn`, `both` | Optional |
 | `--max-turns` | Upper bound for generated multi-turn scenario length. | int | `config.defaults.max_turns` -> `6` | positive integers | Optional |
 | `--job-name` | Output job directory name. If omitted, a timestamp-based name is generated. | string | auto-generated | any filesystem-safe string | Optional |
@@ -140,6 +144,7 @@ The following sections are read from [config/defaults.yaml](C:/Users/emertxe-87/
 | Name | Description | Type | Default | Allowed values | Required |
 |---|---|---:|---|---|---|
 | `samples` | Default sample count for `run`. | int | `10` | positive integers | Optional |
+| `domain` | Default generation domain. | string | `sudoku` | `sudoku` | Optional |
 | `conversation_type` | Default conversation type mode. | string | `both` | `single_turn`, `multi_turn`, `both` | Optional |
 | `max_turns` | Default multi-turn upper bound. | int | `6` | positive integers | Optional |
 | `output_dir` | Output directory relative to repository root. | string | `outputs` | valid directory names | Optional |
@@ -211,7 +216,7 @@ These values define the candidate pools used by the scenario generator.
 #### Basic single run
 
 ```bash
-python -m src.generator.cli run --samples 5
+python -m src.generator.cli run --domain sudoku --samples 5
 ```
 
 Uses the defaults from `config/defaults.yaml` and generates both conversation types unless overridden.
@@ -219,7 +224,7 @@ Uses the defaults from `config/defaults.yaml` and generates both conversation ty
 #### Single-turn only
 
 ```bash
-python -m src.generator.cli run --samples 100 --conversation-type single_turn --job-name sudoku_single_100
+python -m src.generator.cli run --domain sudoku --samples 100 --conversation-type single_turn --job-name sudoku_single_100
 ```
 
 Creates only single-turn samples and stores them under `outputs/sudoku_single_100/`.
@@ -227,7 +232,7 @@ Creates only single-turn samples and stores them under `outputs/sudoku_single_10
 #### Multi-turn focused run
 
 ```bash
-python -m src.generator.cli run --samples 50 --conversation-type multi_turn --max-turns 8 --job-name multi_coaching
+python -m src.generator.cli run --domain sudoku --samples 50 --conversation-type multi_turn --max-turns 8 --job-name multi_coaching
 ```
 
 Useful when you want only multi-turn data and want scenarios to be allowed up to eight exchanges.
@@ -235,7 +240,7 @@ Useful when you want only multi-turn data and want scenarios to be allowed up to
 #### Resume an interrupted job
 
 ```bash
-python -m src.generator.cli run --samples 500 --conversation-type both --job-name my_large_job
+python -m src.generator.cli run --domain sudoku --samples 500 --conversation-type both --job-name my_large_job
 ```
 
 If `outputs/my_large_job/progress.json` already exists, the generator resumes from `next_sample_index`.
@@ -290,6 +295,7 @@ Contains:
 - `completed`
 - `total`
 - `next_sample_index`
+- `domain`
 - `accepted_samples`
 - `rejected_samples`
 - `distribution_stats`
@@ -299,6 +305,7 @@ Contains:
 #### `samples.jsonl`
 Each line is one accepted sample with fields such as:
 - `sample_id`
+- `domain`
 - `scenario_id`
 - `puzzle_id`
 - `parent_puzzle_id`
@@ -312,6 +319,9 @@ Each line is one accepted sample with fields such as:
 - `validation_status`
 - `scenario`
 - `puzzle_metadata`
+- `ground_truth`
+- `tool_used`
+- `tool_usage_details`
 - `conversation`
 - `output`
 
@@ -319,11 +329,15 @@ Each line is one accepted sample with fields such as:
 Each line stores a rejected generation attempt with:
 - `sample_index`
 - `attempt`
+- `domain`
 - `rejection_type`
 - `reasons`
 - `metrics`
 - `scenario`
 - `puzzle_metadata`
+- `ground_truth`
+- `tool_used`
+- `tool_usage_details`
 - `output`
 
 #### `dataset_stats.json`
@@ -336,6 +350,9 @@ Tracks accepted-sample aggregate distributions, including:
 - `tone_distribution`
 - `edge_case_distribution`
 - `tool_usage_distribution`
+- `tool_used_distribution`
+- `tool_name_distribution`
+- `domain_distribution`
 - `puzzle_reuse_distribution`
 - `conversation_type_distribution`
 - `conversation_length_distribution`
@@ -343,6 +360,9 @@ Tracks accepted-sample aggregate distributions, including:
 #### `single_turn.csv`
 Flattened fields include:
 - identifiers and metadata columns
+- `domain`
+- `tool_used`
+- `tool_name`
 - `prompt`
 - `response`
 - `board`
@@ -350,8 +370,36 @@ Flattened fields include:
 #### `multi_turn.csv`
 Flattened fields include:
 - identifiers and metadata columns
+- `domain`
+- `tool_used`
+- `tool_name`
 - `messages` as serialized JSON
 - `board`
+
+## Domain Extension Structure
+The shared pipeline is orchestrated by `ConversationGenerator`, while domain behavior is selected through `src/generator/domains`.
+
+Current supported domain:
+- `sudoku`
+
+The Sudoku adapter owns domain-specific behavior such as scenario generation, puzzle selection, tool decisions, validation, prompt context, and CSV row extensions. Unsupported domains fail with a clear error before generation starts.
+
+To add a future domain, add a new adapter under `src/generator/domains/` and register it in `src/generator/domains/__init__.py`.
+
+## Tool Usage And Ground Truth
+Each accepted and rejected sample records whether a domain tool was used.
+
+Tool metadata includes:
+- `tool_used`
+- `tool_usage_details.used`
+- `tool_usage_details.tool_name`
+- `tool_usage_details.tool_input`
+- `tool_usage_details.tool_output`
+- `tool_usage_details.reason`
+
+Sudoku tool usage is scenario-driven. Examples include candidate scanning, board validation, and solution verification.
+
+Every Sudoku puzzle also includes deterministic `ground_truth`, including the solution, rendered solved board, validity and solvability status, candidates, conflicts, given cells, empty cells, and a suggested move when available. This data is passed into the model prompt and stored in sample metadata.
 
 ## Pipeline Documentation
 For the internal execution model, stage-by-stage processing, sample lifecycle, and extension points, see [PIPELINE.md](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/PIPELINE.md).
