@@ -1,17 +1,17 @@
-# Synthetic Sudoku Conversation Data Generator
+# Synthetic Puzzle Conversation Data Generator
 
 ## Project Overview
-This project generates synthetic Sudoku chat datasets with persistent job state, structured scenario generation, puzzle selection, validation, and diversity checks.
+This project generates synthetic Sudoku and KenKen chat datasets with persistent job state, structured scenario generation, puzzle selection, validation, and diversity checks.
 
 Primary use case:
-- Build large Sudoku conversation datasets for training, evaluation, or experimentation.
+- Build large puzzle conversation datasets for training, evaluation, or experimentation.
 
 Key features:
 - Generates `single_turn`, `multi_turn`, or both conversation types in one run.
-- Supports a domain adapter layer. `sudoku` is the only supported domain today.
+- Supports `sudoku` and solver-backed `kenken` through a domain adapter layer.
 - Uses structured scenarios instead of relying only on LLM creativity.
 - Selects puzzles from a persistent puzzle bank and creates transformed or edge-case variants.
-- Generates deterministic Sudoku ground-truth metadata for each puzzle.
+- Generates deterministic, domain-specific ground-truth metadata for each puzzle.
 - Tracks tool usage explicitly for each generated or rejected sample.
 - Validates generated outputs before accepting them.
 - Rejects overly similar samples and stores rejected attempts for inspection.
@@ -102,8 +102,8 @@ The project loads `.env` automatically from the repository root.
 | `TENSORSTUDIO_SESSION_ID` | Optional value sent as `metadata.session_id`. | string | none | any string | Optional |
 
 ### Configuration Files
-- [config/defaults.yaml](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/config/defaults.yaml): runtime defaults for generation, similarity, puzzles, and storage.
-- [config/prompts.yaml](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/config/prompts.yaml): system and task prompts used to build generation requests.
+- [config/defaults.yaml](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/config/defaults.yaml): shared runtime defaults and domain profiles for generation, scenarios, puzzles, and storage.
+- [config/prompts.yaml](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/config/prompts.yaml): Sudoku prompts plus the KenKen prompt profile.
 
 No additional external datasets are required by the current code. The current implementation uses a built-in puzzle bank and writes a persistent copy to the output directory.
 
@@ -113,6 +113,7 @@ No additional external datasets are required by the current code. The current im
 ```bash
 python -m src.generator.cli --help
 python -m src.generator.cli run --domain sudoku --samples 5
+python -m src.generator.cli run --domain kenken --samples 5
 python -m src.generator.cli status --job-name my_job
 ```
 
@@ -120,6 +121,7 @@ The project also exposes a console script from [pyproject.toml](C:/Users/emertxe
 
 ```bash
 sudoku-generator run --domain sudoku --samples 5
+puzzle-generator run --domain kenken --samples 5
 ```
 
 ### Commands
@@ -135,7 +137,7 @@ sudoku-generator run --domain sudoku --samples 5
 | Name | Description | Type | Default | Allowed values | Required |
 |---|---|---:|---|---|---|
 | `--samples` | Total sample indexes to process. If resuming a job with a larger existing total, the existing total is preserved. | int | `config.defaults.samples` -> `10` | positive integers | Optional |
-| `--domain` | Generation domain. `sudoku` is currently the only supported domain. | string | `config.defaults.domain` -> `sudoku` | `sudoku` | Optional |
+| `--domain` | Generation domain. | string | `config.defaults.domain` -> `sudoku` | `sudoku`, `kenken` | Optional |
 | `--conversation-type` | Which conversation types to generate. | string | `config.defaults.conversation_type` -> `both` | `single_turn`, `multi_turn`, `both` | Optional |
 | `--max-turns` | Upper bound for generated multi-turn scenario length. | int | `config.defaults.max_turns` -> `6` | positive integers | Optional |
 | `--job-name` | Output job directory name. If omitted, a timestamp-based name is generated. | string | auto-generated | any filesystem-safe string | Optional |
@@ -419,8 +421,9 @@ The shared pipeline is orchestrated by `ConversationGenerator`, while domain beh
 
 Current supported domain:
 - `sudoku`
+- `kenken`
 
-The Sudoku adapter owns domain-specific behavior such as scenario generation, puzzle selection, tool decisions, validation, prompt context, and CSV row extensions. Unsupported domains fail with a clear error before generation starts.
+Each adapter owns domain-specific scenario generation, puzzle selection, tool decisions, validation, prompt context, prompts, and CSV row extensions. Unsupported domains fail with a clear error before generation starts.
 
 To add a future domain, add a new adapter under `src/generator/domains/` and register it in `src/generator/domains/__init__.py`.
 
@@ -438,6 +441,8 @@ Tool metadata includes:
 Sudoku tool usage is scenario-driven. Examples include candidate scanning, board validation, and solution verification.
 
 Every Sudoku puzzle also includes deterministic `ground_truth`, including the solution, rendered solved board, validity and solvability status, candidates, conflicts, given cells, empty cells, and a suggested move when available. This data is passed into the model prompt and stored in sample metadata.
+
+KenKen uses deterministic 4x4, 5x5, and 6x6 puzzle generation backed by a solution-counting solver. Its canonical `puzzle` value is JSON containing `size` and `cages`; the existing `board` field contains a stable text rendering. Ground truth includes the solved grid, structural violations, solver status, cage evaluations, viable cage tuples, forced values, and a suggested deduction. KenKen tools provide cage analysis, constraint validation, and solution verification.
 
 ## Pipeline Documentation
 For the internal execution model, stage-by-stage processing, sample lifecycle, and extension points, see [PIPELINE.md](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/PIPELINE.md).

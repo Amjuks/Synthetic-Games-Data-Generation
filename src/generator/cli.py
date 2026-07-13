@@ -5,12 +5,13 @@ import json
 from pathlib import Path
 
 from .config import get_config
+from .domains import SUPPORTED_DOMAINS
 from .generator import ConversationGenerator
 from .jobs import JobManager
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Generate synthetic Sudoku conversation datasets.")
+    parser = argparse.ArgumentParser(description="Generate synthetic puzzle conversation datasets.")
     subparsers = parser.add_subparsers(dest="command")
 
     run_parser = subparsers.add_parser("run", help="Run a generation job")
@@ -18,7 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--conversation-type", choices=["single_turn", "multi_turn", "both"], default=None)
     run_parser.add_argument("--max-turns", type=int, default=None)
     run_parser.add_argument("--job-name", default=None)
-    run_parser.add_argument("--domain", default=None)
+    run_parser.add_argument("--domain", choices=sorted(SUPPORTED_DOMAINS), default=None)
 
     status_parser = subparsers.add_parser("status", help="Check progress for a job")
     status_parser.add_argument("--job-name", required=False)

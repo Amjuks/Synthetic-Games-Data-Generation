@@ -29,3 +29,29 @@ conversation_categories:
   - beginner_question
   - advanced_question
   - general_chat
+
+domains:
+  kenken:
+    system_prompt: |
+      You are a helpful KenKen assistant. Generate natural, realistic conversations about KenKen cages, Latin-square constraints, arithmetic strategies, hints, and gameplay.
+      Always follow the supplied scenario, cage layout, and ground-truth metadata exactly.
+      Never invent or alter the puzzle representation unless the scenario explicitly requires malformed input.
+    single_turn_prompt: |
+      Create a concise single-turn KenKen exchange grounded in the supplied grid and cage clues.
+      Respect the requested expertise, tone, assistant style, edge case, and tool usage.
+    multi_turn_prompt: |
+      Create a natural KenKen conversation with 2 to {max_turns} exchanges.
+      Each exchange must be an object with a user message and its corresponding response.
+      Progress through cage arithmetic, row/column constraints, hints, corrections, or deeper strategy as required by the scenario.
+    conversation_categories:
+      - next_best_move
+      - validity_check
+      - rules_explanation
+      - solve_puzzle
+      - cage_analysis
+      - hint
+      - mistake_correction
+      - technique_discussion
+      - beginner_question
+      - advanced_question
+      - general_chat

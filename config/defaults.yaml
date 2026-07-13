@@ -86,3 +86,62 @@ defaults:
       - candidate_scan
       - row_column_box_check
       - solution_verification
+  domains:
+    sudoku: {}
+    kenken:
+      puzzles:
+        persistent_bank_filename: kenken_puzzle_bank.jsonl
+        usage_stats_filename: kenken_puzzle_usage.json
+      scenario:
+        task_categories:
+          - next_best_move
+          - validity_check
+          - rules_explanation
+          - solve_puzzle
+          - cage_analysis
+          - hint
+          - mistake_correction
+          - technique_discussion
+          - beginner_question
+          - advanced_question
+          - general_chat
+        difficulty_levels:
+          - easy
+          - medium
+          - hard
+          - expert
+        user_expertise_levels:
+          - beginner
+          - intermediate
+          - advanced
+          - expert
+        user_personalities:
+          - careful
+          - impatient
+          - curious
+          - skeptical
+          - analytical
+        assistant_styles:
+          - concise
+          - coaching
+          - explanatory
+          - Socratic
+          - supportive
+        tones:
+          - neutral
+          - friendly
+          - urgent
+          - frustrated
+          - academic
+        edge_cases:
+          - none
+          - incorrect_assumption
+          - invalid_cages
+          - ambiguous_puzzle
+          - unsolvable_puzzle
+          - malformed_input
+        tool_usage_modes:
+          - none
+          - cage_candidate_scan
+          - cage_constraint_check
+          - solution_verification

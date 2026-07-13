@@ -13,6 +13,7 @@ class SudokuDomainAdapter:
 
     def __init__(self, config: dict[str, Any]):
         self.config = config
+        self.prompts = config.get("prompts", {})
         self.scenario_generator = ScenarioGenerator(config)
         self.puzzle_manager = PuzzleManager(config)
         self.validator = SampleValidator()
@@ -72,6 +73,12 @@ class SudokuDomainAdapter:
             "ground_truth": puzzle.ground_truth,
             "tool_usage": tool_usage,
         }
+
+    def generation_guidance(self) -> str:
+        return (
+            "Use the supplied Sudoku puzzle exactly and never invent or modify the board unless the "
+            "scenario explicitly requires malformed input."
+        )
 
     def flatten_sample_row(self, row: dict[str, Any], sample: dict[str, Any]) -> dict[str, Any]:
         row["domain"] = sample.get("domain", self.name)

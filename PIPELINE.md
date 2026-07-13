@@ -3,8 +3,9 @@
 ## Pipeline Overview
 The generator is now structured as a shared pipeline plus a domain adapter. The shared pipeline handles job execution, retries, model calls, similarity checks, storage, and resume behavior. Domain-specific behavior lives behind `src/generator/domains`.
 
-Only one domain is currently registered:
+Registered domains:
 - `sudoku`
+- `kenken`
 
 High-level flow:
 
@@ -26,6 +27,7 @@ The orchestration entry point is `src/generator/generator.py`.
 Implementation:
 - `src/generator/domains/__init__.py`
 - `src/generator/domains/sudoku.py`
+- `src/generator/domains/kenken.py`
 
 Input:
 - domain name from config or `--domain`
@@ -37,7 +39,7 @@ Output:
 How it works:
 - `get_domain_adapter()` validates the requested domain.
 - Unsupported domains raise a clear `ValueError`.
-- The Sudoku adapter owns scenario generation, puzzle selection, tool decisions, validation, prompt context, and CSV row extensions.
+- Each adapter owns scenario generation, puzzle selection, prompts, tool decisions, validation, prompt context, and CSV row extensions.
 
 ### 2. Scenario Generator
 Implementation:
@@ -110,7 +112,7 @@ Current edge-case variants:
 
 ### 4. Tool Usage Stage
 Implementation:
-- `src/generator/domains/sudoku.py`
+- the selected domain adapter
 
 Input:
 - `Scenario`
@@ -121,7 +123,7 @@ Output:
 - tool usage dictionary
 
 How it works:
-- Tool usage is decided by the Sudoku adapter.
+- Tool usage is decided by the selected adapter.
 - If no tool is required, the sample records `used: false`.
 - If a tool is required, the sample records tool name, input, output, and reason.
 
@@ -129,6 +131,11 @@ Current Sudoku tools:
 - `sudoku_candidate_scan`
 - `sudoku_board_validation`
 - `sudoku_solution_verification`
+
+Current KenKen tools:
+- `kenken_cage_analysis`
+- `kenken_constraint_validation`
+- `kenken_solution_verification`
 
 Tool output is included in:
 - prompt context sent to the model
@@ -334,15 +341,15 @@ The expected tool usage record shape is:
 ```
 
 ### Add Stronger Ground Truth
-The ground-truth builder lives in `src/generator/puzzles.py`. This is the right place to add solver-backed uniqueness checks, more advanced candidate logic, or task-specific facts.
+Sudoku ground truth lives in `src/generator/puzzles.py`; solver-backed KenKen ground truth lives in `src/generator/kenken.py`.
 
 ### Add Stronger Validation
 The validator lives in `src/generator/validation.py` and is invoked through the domain adapter. Solver-backed checks can be added there without changing storage or model code.
 
 ## Known Implementation Boundaries
-- Only the `sudoku` domain is registered.
 - No external puzzle corpus import exists yet.
 - No true Sudoku solver or uniqueness verifier is implemented yet.
+- KenKen base puzzles and edge-case classifications are solver verified.
 - `embedding_similarity` currently means local token-vector cosine similarity.
 - There is no concurrency, batching, or distributed job execution.
 - Configuration is YAML plus environment variables only.

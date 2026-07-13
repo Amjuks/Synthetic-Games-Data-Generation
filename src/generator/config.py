@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,16 @@ def get_config() -> dict[str, Any]:
     load_dotenv(ROOT / ".env")
     defaults = load_yaml(DEFAULTS_FILE)
     prompts = load_yaml(PROMPTS_FILE)
-    config = defaults.get("defaults", {}).copy()
+    config = deepcopy(defaults.get("defaults", {}))
+    prompt_profiles = prompts.get("domains", {})
+    shared_prompts = {key: value for key, value in prompts.items() if key != "domains"}
+    domain_profiles = deepcopy(config.get("domains", {}))
+    domain_profiles.setdefault("sudoku", {})["prompts"] = deepcopy(
+        prompt_profiles.get("sudoku", shared_prompts)
+    )
+    for domain, domain_prompts in prompt_profiles.items():
+        domain_profiles.setdefault(domain, {})["prompts"] = deepcopy(domain_prompts)
+    config["domains"] = domain_profiles
     model_config = config.get("model", {}).copy()
     provider = get_env_or_default("MODEL_PROVIDER", model_config.get("provider", "openai"))
     model_config["provider"] = provider
@@ -64,11 +74,28 @@ def get_config() -> dict[str, Any]:
         model_config["max_tokens"] = _get_int_env("OPENAI_MAX_TOKENS", model_config.get("max_tokens", 800))
         model_config["timeout"] = _get_float_env("OPENAI_TIMEOUT", model_config.get("timeout", 60))
     config["model"] = model_config
-    config["prompts"] = prompts
+    config["prompts"] = shared_prompts
     config["root_dir"] = str(ROOT)
     config["output_dir"] = config.get("output_dir", "outputs")
     config["output_path"] = str(ROOT / config["output_dir"])
     return config
+
+
+def resolve_domain_config(config: dict[str, Any], domain: str) -> dict[str, Any]:
+    """Return shared configuration overlaid with the selected domain profile."""
+    resolved = deepcopy(config)
+    profile = resolved.get("domains", {}).get(domain, {})
+    return _deep_merge(resolved, profile)
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
 
 
 def get_env_or_default(name: str, default: Any) -> Any:

@@ -20,7 +20,7 @@ class ConversationGenerator:
         self.config = config or get_config()
         self.domain_name = self.config.get("domain", "sudoku")
         self.domain = get_domain_adapter(self.domain_name, self.config)
-        self.prompts = self.config.get("prompts", {})
+        self.prompts = self.domain.prompts
         self.model_client = ModelClient(self.config.get("model", {}))
         self.diversity_checker = SimilarityDiversityChecker(self.config)
         self.generation_model = self.config.get("model", {}).get("model_name", "unknown-model")
@@ -306,7 +306,7 @@ class ConversationGenerator:
             f"Tool Context JSON:\n{json.dumps(self.domain.prompt_context(scenario, puzzle, tool_usage), ensure_ascii=False)}\n\n"
             f"Puzzle board:\n{puzzle.rendered_board}\n\n"
             f"Output schema:\n{output_schema}\n"
-            "Use the supplied puzzle exactly and never invent or modify the board unless the scenario explicitly requires malformed input.\n"
+            f"{self.domain.generation_guidance()}\n"
             "Keep the task category aligned with the scenario.\n"
         )
 
