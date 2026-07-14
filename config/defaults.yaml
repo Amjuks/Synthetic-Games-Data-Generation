@@ -18,6 +18,8 @@ defaults:
     metadata_filename: samples.jsonl
     rejected_filename: rejected_samples.jsonl
     stats_filename: dataset_stats.json
+    events_filename: generation_events.jsonl
+    log_filename: generation.log
   puzzles:
     persistent_bank_filename: puzzle_bank.jsonl
     usage_stats_filename: puzzle_usage.json

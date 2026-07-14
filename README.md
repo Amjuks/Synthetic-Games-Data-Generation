@@ -16,6 +16,8 @@ Key features:
 - Validates generated outputs before accepting them.
 - Rejects overly similar samples and stores rejected attempts for inspection.
 - Writes outputs incrementally and can resume interrupted jobs.
+- Allows a named job to resume with different domain, conversation-type, and turn-limit settings; changes are recorded in progress and logs.
+- Writes readable and structured per-job model request/error logs, including the exact credential-free request payload.
 - Supports `openai`, `custom_chat`, `tensorstudio`, and mock generation modes.
 
 ## Setup Instructions
@@ -136,7 +138,7 @@ puzzle-generator run --domain kenken --samples 5
 
 | Name | Description | Type | Default | Allowed values | Required |
 |---|---|---:|---|---|---|
-| `--samples` | Total sample indexes to process. If resuming a job with a larger existing total, the existing total is preserved. | int | `config.defaults.samples` -> `10` | positive integers | Optional |
+| `--samples` | Total sample indexes to process. On resume, the new value replaces the previous target but cannot be lower than the number already completed. | int | `config.defaults.samples` -> `10` | positive integers | Optional |
 | `--domain` | Generation domain. | string | `config.defaults.domain` -> `sudoku` | `sudoku`, `kenken` | Optional |
 | `--conversation-type` | Which conversation types to generate. | string | `config.defaults.conversation_type` -> `both` | `single_turn`, `multi_turn`, `both` | Optional |
 | `--max-turns` | Upper bound for generated multi-turn scenario length. | int | `config.defaults.max_turns` -> `6` | positive integers | Optional |
@@ -326,6 +328,8 @@ outputs/job_20260629_140641_6ca5/
 | `outputs/<job_name>/multi_turn.csv` | CSV | Flattened accepted multi-turn rows. |
 | `outputs/puzzle_bank.jsonl` or `<output_path>/puzzle_bank.jsonl` | JSONL | Persistent snapshot of the built-in puzzle bank. |
 | `outputs/puzzle_usage.json` or `<output_path>/puzzle_usage.json` | JSON | Puzzle and parent-puzzle usage counts. |
+| `<job_dir>/generation.log` | text | Readable request, response, error, and traceback history. |
+| `<job_dir>/generation_events.jsonl` | JSONL | Structured job and model-call events, including full credential-free request payloads. |
 
 ### File Details
 #### `progress.json`

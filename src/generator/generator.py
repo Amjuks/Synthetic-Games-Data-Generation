@@ -9,6 +9,7 @@ from typing import Any
 from .config import get_config
 from .diversity import SimilarityDiversityChecker
 from .domains import get_domain_adapter
+from .generation_log import GenerationEventLogger
 from .jobs import JobManager
 from .model_client import ModelClient
 from .models import DatasetSample, PuzzleRecord, Scenario, utc_now_iso
@@ -25,6 +26,8 @@ class ConversationGenerator:
         self.diversity_checker = SimilarityDiversityChecker(self.config)
         self.generation_model = self.config.get("model", {}).get("model_name", "unknown-model")
         self.max_regeneration_attempts = int(self.config.get("generation", {}).get("max_regeneration_attempts", 3))
+        self.event_logger: GenerationEventLogger | None = None
+        self.last_model_error_details: dict[str, Any] | None = None
 
     def run(
         self,
@@ -37,9 +40,24 @@ class ConversationGenerator:
         if domain and domain != self.domain_name:
             raise ValueError(f"Generator was initialized for domain '{self.domain_name}', not '{domain}'.")
         job_manager = JobManager(job_name=job_name, config=self.config)
+        self.event_logger = GenerationEventLogger(job_manager.job_dir, self.config)
+        self.last_model_error_details = None
         status = job_manager.get_status()
         target_total = self._resolve_target_total(status, samples)
-        self._validate_resume_config(status, conversation_type, max_turns, self.domain_name)
+        resume_configuration_changes = self._validate_resume_config(
+            status,
+            conversation_type,
+            max_turns,
+            self.domain_name,
+            target_total,
+        )
+        configuration_history = list(status.get("configuration_history", []))
+        if resume_configuration_changes:
+            configuration_history.append({
+                "changed_at": utc_now_iso(),
+                "completed_sample_indexes": int(status.get("completed", 0) or 0),
+                "changes": resume_configuration_changes,
+            })
 
         storage = DatasetStorage(job_manager.job_dir, self.config, domain_adapter=self.domain)
         history = storage.get_history()
@@ -67,7 +85,31 @@ class ConversationGenerator:
             multi_turn_path=str(storage.multi_turn_path),
             distribution_stats=distribution_stats,
             last_error=None,
+            last_error_traceback=None,
+            last_error_details=None,
+            events_log_path=str(self.event_logger.events_path),
+            generation_log_path=str(self.event_logger.text_path),
+            resume_configuration_changes=resume_configuration_changes,
+            configuration_history=configuration_history,
         )
+        self.event_logger.log(
+            "job_started",
+            job_name=job_manager.job_name,
+            domain=self.domain_name,
+            requested_samples=samples,
+            target_total=target_total,
+            resume_sample_index=start_index,
+            conversation_type=conversation_type,
+            max_turns=max_turns,
+            resume_configuration_changes=resume_configuration_changes,
+        )
+        if resume_configuration_changes:
+            self.event_logger.log(
+                "resume_configuration_changed",
+                level="WARNING",
+                job_name=job_manager.job_name,
+                changes=resume_configuration_changes,
+            )
 
         try:
             for sample_index in range(start_index, target_total):
@@ -96,6 +138,7 @@ class ConversationGenerator:
                 )
         except KeyboardInterrupt:
             rejected_samples = storage.get_rejected_count()
+            self.event_logger.log("job_interrupted", level="WARNING", completed=completed)
             job_manager.save_status(
                 status="stopped",
                 current_stage="interrupted",
@@ -109,6 +152,20 @@ class ConversationGenerator:
             raise
         except Exception as exc:
             rejected_samples = storage.get_rejected_count()
+            failure_traceback = traceback.format_exc()
+            failure_event = self.event_logger.log(
+                "job_failed",
+                level="ERROR",
+                completed=completed,
+                error_type=type(exc).__name__,
+                error=str(exc),
+                model_error_details=self.last_model_error_details,
+                traceback=failure_traceback,
+            )
+            error_details = dict(self.last_model_error_details or {})
+            error_details.setdefault("event_id", failure_event["event_id"])
+            error_details["events_log_path"] = str(self.event_logger.events_path)
+            error_details["generation_log_path"] = str(self.event_logger.text_path)
             job_manager.save_status(
                 status="failed",
                 current_stage="error",
@@ -118,7 +175,8 @@ class ConversationGenerator:
                 rejected_samples=rejected_samples,
                 distribution_stats=distribution_stats,
                 last_error=f"{type(exc).__name__}: {exc}",
-                last_error_traceback=traceback.format_exc(),
+                last_error_traceback=failure_traceback,
+                last_error_details=error_details,
             )
             raise
 
@@ -132,6 +190,14 @@ class ConversationGenerator:
             rejected_samples=rejected_samples,
             distribution_stats=distribution_stats,
             last_error=None,
+            last_error_traceback=None,
+            last_error_details=None,
+        )
+        self.event_logger.log(
+            "job_completed",
+            completed=completed,
+            accepted_samples=accepted_samples,
+            rejected_samples=rejected_samples,
         )
         return {
             "job_name": job_manager.job_name,
@@ -142,6 +208,8 @@ class ConversationGenerator:
             "accepted_samples": accepted_samples,
             "rejected_samples": rejected_samples,
             "metadata_path": str(storage.metadata_path),
+            "events_log_path": str(self.event_logger.events_path),
+            "generation_log_path": str(self.event_logger.text_path),
         }
 
     def generate_single_turn(self, sample_index: int) -> dict[str, Any]:
@@ -218,7 +286,18 @@ class ConversationGenerator:
             )
             puzzle = self.domain.select_problem(scenario, sample_index * self.max_regeneration_attempts + attempt)
             tool_usage = self.domain.maybe_use_tool(scenario, puzzle)
-            output = self._generate_output(scenario, puzzle, tool_usage)
+            scenario_sample_index = sample_index * self.max_regeneration_attempts + attempt
+            output = self._generate_output(
+                scenario,
+                puzzle,
+                tool_usage,
+                request_context={
+                    "sample_index": sample_index,
+                    "scenario_sample_index": scenario_sample_index,
+                    "attempt": attempt,
+                    "generation_type": generation_type,
+                },
+            )
             validation_result = self.domain.validate(output, scenario, puzzle)
             if not validation_result.is_valid:
                 rejected_count += 1
@@ -279,10 +358,84 @@ class ConversationGenerator:
             f"after {self.max_regeneration_attempts} attempts. Last rejection: {rejection_reasons[-1] if rejection_reasons else 'unknown'}"
         )
 
-    def _generate_output(self, scenario: Scenario, puzzle: PuzzleRecord, tool_usage: dict[str, Any]) -> dict[str, Any]:
+    def _generate_output(
+        self,
+        scenario: Scenario,
+        puzzle: PuzzleRecord,
+        tool_usage: dict[str, Any],
+        request_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         prompt = self._build_generation_prompt(scenario, puzzle, tool_usage)
-        raw_output = self.model_client.generate(prompt)
+        context = {
+            **(request_context or {}),
+            "domain": self.domain_name,
+            "scenario_id": scenario.scenario_id,
+            "task_category": scenario.task_category,
+            "edge_case": scenario.edge_case,
+            "puzzle_id": puzzle.puzzle_id,
+            "parent_puzzle_id": puzzle.parent_puzzle_id,
+        }
+        prompt_details = {
+            "prompt_characters": len(prompt),
+            "prompt_bytes_utf8": len(prompt.encode("utf-8")),
+            "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        }
+        request = self._describe_model_request(prompt)
+        if self.event_logger is not None:
+            self.event_logger.log(
+                "model_request_started",
+                context=context,
+                **prompt_details,
+                request=request,
+            )
+        try:
+            raw_output = self.model_client.generate(prompt)
+        except Exception as exc:
+            error_traceback = traceback.format_exc()
+            if self.event_logger is not None:
+                event = self.event_logger.log(
+                    "model_request_failed",
+                    level="ERROR",
+                    context=context,
+                    **prompt_details,
+                    request=request,
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                    traceback=error_traceback,
+                )
+                event_id = event["event_id"]
+            else:
+                event_id = None
+            self.last_model_error_details = {
+                "event_id": event_id,
+                "context": context,
+                **prompt_details,
+                "provider": request.get("provider"),
+                "model": request.get("model"),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
+            raise
+        if self.event_logger is not None:
+            self.event_logger.log(
+                "model_request_succeeded",
+                context=context,
+                **prompt_details,
+                response_characters=len(raw_output),
+                raw_response=raw_output,
+            )
         return self._parse_output(raw_output, scenario, puzzle)
+
+    def _describe_model_request(self, prompt: str) -> dict[str, Any]:
+        describe = getattr(self.model_client, "describe_request", None)
+        if callable(describe):
+            return describe(prompt)
+        model_config = self.config.get("model", {})
+        return {
+            "provider": model_config.get("provider", "test_or_custom"),
+            "model": model_config.get("model_name", self.generation_model),
+            "payload": {"input": prompt},
+        }
 
     def _build_generation_prompt(self, scenario: Scenario, puzzle: PuzzleRecord, tool_usage: dict[str, Any]) -> str:
         output_schema = (
@@ -447,27 +600,30 @@ class ConversationGenerator:
         }
 
     def _resolve_target_total(self, status: dict[str, Any], requested_samples: int) -> int:
-        existing_total = int(status.get("total", 0) or 0)
-        if existing_total > requested_samples:
-            return existing_total
-        return requested_samples
+        completed = int(status.get("completed", 0) or 0)
+        return max(completed, requested_samples)
 
-    def _validate_resume_config(self, status: dict[str, Any], conversation_type: str, max_turns: int, domain: str) -> None:
-        existing_domain = status.get("domain")
-        if existing_domain and existing_domain != domain:
-            raise ValueError(
-                f"Job '{status.get('job_name')}' was started with domain='{existing_domain}', not '{domain}'."
-            )
-
-        existing_conversation_type = status.get("conversation_type")
-        if existing_conversation_type and existing_conversation_type != conversation_type:
-            raise ValueError(
-                f"Job '{status.get('job_name')}' was started with conversation_type="
-                f"'{existing_conversation_type}', not '{conversation_type}'."
-            )
-
-        existing_max_turns = status.get("max_turns")
-        if existing_max_turns is not None and int(existing_max_turns) != int(max_turns):
-            raise ValueError(
-                f"Job '{status.get('job_name')}' was started with max_turns={existing_max_turns}, not {max_turns}."
-            )
+    def _validate_resume_config(
+        self,
+        status: dict[str, Any],
+        conversation_type: str,
+        max_turns: int,
+        domain: str,
+        target_total: int,
+    ) -> dict[str, dict[str, Any]]:
+        """Describe resume-setting changes without preventing the job from continuing."""
+        requested = {
+            "domain": domain,
+            "conversation_type": conversation_type,
+            "max_turns": int(max_turns),
+            "total": int(target_total),
+        }
+        changes: dict[str, dict[str, Any]] = {}
+        for key, current_value in requested.items():
+            previous_value = status.get(key)
+            if previous_value is None:
+                continue
+            comparable_previous = int(previous_value) if key in {"max_turns", "total"} else previous_value
+            if comparable_previous != current_value:
+                changes[key] = {"previous": previous_value, "current": current_value}
+        return changes

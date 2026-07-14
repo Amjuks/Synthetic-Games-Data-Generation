@@ -42,6 +42,51 @@ class ModelClient:
         payload = response.json()
         return payload.get("choices", [{}])[0].get("message", {}).get("content", "")
 
+    def describe_request(self, prompt: str) -> dict[str, Any]:
+        """Return the provider request without credentials for diagnostic logging."""
+        provider = self.provider
+        model_name = self.config.get("model_name", "gpt-4o-mini")
+        details: dict[str, Any] = {
+            "provider": provider,
+            "model": model_name,
+            "timeout": self.timeout,
+            "endpoint": self.base_url or self.endpoint or ("OpenAI Responses API" if provider == "openai" else None),
+        }
+        if provider == "openai":
+            payload: dict[str, Any] = {"model": model_name, "input": prompt}
+            if self.config.get("temperature") is not None:
+                payload["temperature"] = self.config["temperature"]
+            if self.config.get("max_tokens") is not None:
+                payload["max_output_tokens"] = self.config["max_tokens"]
+        elif provider == "custom_chat":
+            payload = {
+                "model": model_name,
+                "messages": [
+                    {"role": "system", "content": f"Reasoning: {self.config.get('reasoning', 'Low')}"},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": self.config.get("temperature", 0.1),
+                "chat_template_kwargs": {"enable_thinking": self.config.get("enable_thinking", False)},
+            }
+            if self.config.get("max_tokens") is not None:
+                payload["max_tokens"] = self.config["max_tokens"]
+        elif provider == "tensorstudio":
+            payload = {"model": model_name, "messages": [{"role": "user", "content": prompt}]}
+            if self.config.get("max_tokens") is not None:
+                payload["max_tokens"] = self.config["max_tokens"]
+            if self.config.get("temperature") is not None:
+                payload["temperature"] = self.config["temperature"]
+            if self.config.get("session_id"):
+                payload["metadata"] = {"session_id": self.config["session_id"]}
+        else:
+            payload = {
+                "model": model_name,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": self.config.get("temperature", 0.8),
+            }
+        details["payload"] = payload
+        return details
+
     def _openai_generate(self, prompt: str) -> str:
         try:
             from openai import OpenAI

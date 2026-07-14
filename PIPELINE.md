@@ -317,6 +317,9 @@ Lifecycle summary:
 6. Progress is updated after each sample index.
 7. Failures and interruptions preserve resume state.
 
+## Request And Error Logs
+Each job appends a readable `generation.log` and structured `generation_events.jsonl`. Model-call events record the sample and retry context, scenario and puzzle IDs, provider/model settings, prompt size and SHA-256, full request payload without credentials, raw successful response, or the exception and traceback. On failure, `progress.json.last_error_details` identifies the failed event and both log paths.
+
 ## Extensibility
 ### Add A New Domain
 1. Create a new adapter under `src/generator/domains/`.

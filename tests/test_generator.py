@@ -271,6 +271,20 @@ def test_run_resumes_after_failure(tmp_path):
     assert first_progress["completed"] == 1
     assert first_progress["accepted_samples"] == 1
     assert len(first_rows) == 1
+    assert first_progress["generation_log_path"].endswith("generation.log")
+    assert first_progress["events_log_path"].endswith("generation_events.jsonl")
+    assert first_progress["last_error_details"]["context"]["sample_index"] == 1
+    assert first_progress["last_error_details"]["context"]["attempt"] == 0
+    assert first_progress["last_error_details"]["prompt_characters"] > 0
+    events_path = tmp_path / "resume-job" / "generation_events.jsonl"
+    events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+    failed_event = next(event for event in events if event["event"] == "model_request_failed")
+    assert failed_event["request"]["payload"]["input"]
+    assert '"sample_index": 2' in failed_event["request"]["payload"]["input"]
+    assert failed_event["error_type"] == "RuntimeError"
+    readable_log = (tmp_path / "resume-job" / "generation.log").read_text(encoding="utf-8")
+    assert "model_request_failed" in readable_log
+    assert "synthetic failure" in readable_log
 
     resumed_generator = ConversationGenerator(config)
     resumed_generator.model_client = IndexedModelClient(
@@ -305,3 +319,11 @@ def test_run_resumes_after_failure(tmp_path):
     assert final_progress["completed"] == 3
     assert final_progress["accepted_samples"] == 3
     assert len(final_rows) == 3
+
+
+def test_resumed_job_uses_new_sample_total_without_undoing_completed_work(tmp_path):
+    generator = ConversationGenerator(make_config(str(tmp_path)))
+
+    assert generator._resolve_target_total({"total": 10, "completed": 2}, 5) == 5
+    assert generator._resolve_target_total({"total": 10, "completed": 2}, 1) == 2
+    assert generator._resolve_target_total({"total": 3, "completed": 2}, 12) == 12

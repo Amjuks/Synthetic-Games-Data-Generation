@@ -118,3 +118,26 @@ def test_tensorstudio_provider_sends_expected_payload(monkeypatch):
         "metadata": {"session_id": "test-001"},
     }
     assert captured["timeout"] == 300
+
+
+def test_request_description_contains_payload_but_not_credentials():
+    client = ModelClient(
+        {
+            "provider": "openai",
+            "api_key": "must-not-be-logged",
+            "model_name": "test-model",
+            "temperature": 0.2,
+            "max_tokens": 100,
+            "timeout": 30,
+        }
+    )
+
+    description = client.describe_request("FULL PROMPT")
+
+    assert description["payload"] == {
+        "model": "test-model",
+        "input": "FULL PROMPT",
+        "temperature": 0.2,
+        "max_output_tokens": 100,
+    }
+    assert "must-not-be-logged" not in str(description)

@@ -177,18 +177,26 @@ def test_end_to_end_kenken_generation_writes_compatible_dataset(tmp_path):
     assert (tmp_path / "kenken_puzzle_bank.jsonl").exists()
 
 
-def test_existing_job_cannot_resume_under_a_different_domain(tmp_path):
+def test_existing_job_can_resume_with_different_settings(tmp_path):
     config = kenken_config(tmp_path)
     JobManager(job_name="domain-locked", config=config).save_status(
         domain="sudoku",
-        conversation_type="single_turn",
-        max_turns=4,
+        conversation_type="both",
+        max_turns=9,
     )
     generator = ConversationGenerator(config)
 
-    try:
-        generator.run(samples=1, conversation_type="single_turn", max_turns=4, job_name="domain-locked")
-    except ValueError as exc:
-        assert "was started with domain='sudoku'" in str(exc)
-    else:
-        raise AssertionError("Expected cross-domain resume to be rejected")
+    generator.run(samples=0, conversation_type="single_turn", max_turns=4, job_name="domain-locked")
+
+    progress = json.loads((tmp_path / "domain-locked" / "progress.json").read_text(encoding="utf-8"))
+    assert progress["domain"] == "kenken"
+    assert progress["conversation_type"] == "single_turn"
+    assert progress["max_turns"] == 4
+    assert progress["resume_configuration_changes"] == {
+        "domain": {"previous": "sudoku", "current": "kenken"},
+        "conversation_type": {"previous": "both", "current": "single_turn"},
+        "max_turns": {"previous": 9, "current": 4},
+    }
+    assert progress["configuration_history"][-1]["changes"] == progress["resume_configuration_changes"]
+    log_text = (tmp_path / "domain-locked" / "generation.log").read_text(encoding="utf-8")
+    assert "resume_configuration_changed" in log_text
