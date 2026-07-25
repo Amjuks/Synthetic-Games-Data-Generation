@@ -8,6 +8,7 @@ defaults:
   generation:
     random_seed: 17
     max_regeneration_attempts: 3
+    max_prompt_characters: 50000
   model:
     provider: openai
     model_name: gpt-4o-mini
@@ -35,6 +36,7 @@ defaults:
     puzzle_similarity_threshold: 1.0
     related_puzzle_similarity: 0.35
     related_edge_case_puzzle_similarity: 0.55
+    contextual_similarity_text_floor: 0.75
   scenario:
     task_categories:
       - next_best_move
@@ -146,4 +148,61 @@ defaults:
           - none
           - cage_candidate_scan
           - cage_constraint_check
+          - solution_verification
+    kakuro:
+      puzzles:
+        persistent_bank_filename: kakuro_puzzle_bank.jsonl
+        usage_stats_filename: kakuro_puzzle_usage.json
+      scenario:
+        task_categories:
+          - next_best_move
+          - validity_check
+          - rules_explanation
+          - solve_puzzle
+          - run_analysis
+          - hint
+          - mistake_correction
+          - technique_discussion
+          - beginner_question
+          - advanced_question
+          - general_chat
+        difficulty_levels:
+          - easy
+          - medium
+          - hard
+          - expert
+        user_expertise_levels:
+          - beginner
+          - intermediate
+          - advanced
+          - expert
+        user_personalities:
+          - careful
+          - impatient
+          - curious
+          - skeptical
+          - analytical
+        assistant_styles:
+          - concise
+          - coaching
+          - explanatory
+          - Socratic
+          - supportive
+        tones:
+          - neutral
+          - friendly
+          - urgent
+          - frustrated
+          - academic
+        edge_cases:
+          - none
+          - incorrect_assumption
+          - invalid_clues
+          - ambiguous_puzzle
+          - unsolvable_puzzle
+          - malformed_input
+        tool_usage_modes:
+          - none
+          - run_candidate_scan
+          - sum_constraint_check
           - solution_verification

@@ -70,9 +70,20 @@ class SudokuDomainAdapter:
     def prompt_context(self, scenario: Scenario, puzzle: PuzzleRecord, tool_usage: dict[str, Any]) -> dict[str, Any]:
         return {
             "domain": self.name,
-            "ground_truth": puzzle.ground_truth,
             "tool_usage": tool_usage,
         }
+
+    def prompt_problem(self, puzzle: PuzzleRecord) -> dict[str, Any]:
+        return {
+            "puzzle_id": puzzle.puzzle_id,
+            "puzzle": puzzle.puzzle,
+            "difficulty": puzzle.difficulty,
+            "required_strategies": puzzle.required_strategies,
+            "metadata": puzzle.metadata,
+        }
+
+    def prompt_ground_truth(self, puzzle: PuzzleRecord) -> dict[str, Any]:
+        return puzzle.ground_truth
 
     def generation_guidance(self) -> str:
         return (

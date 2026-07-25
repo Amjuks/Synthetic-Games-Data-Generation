@@ -144,11 +144,131 @@ class KenKenDomainAdapter:
     def prompt_context(self, scenario: Scenario, puzzle: PuzzleRecord, tool_usage: dict[str, Any]) -> dict[str, Any]:
         return {
             "domain": self.name,
-            "size": puzzle.metadata.get("size"),
-            "cages": puzzle.metadata.get("cages", []),
-            "ground_truth": puzzle.ground_truth,
-            "tool_usage": tool_usage,
+            "tool_usage": self._compact_tool_usage(tool_usage, puzzle),
         }
+
+    def prompt_problem(self, puzzle: PuzzleRecord) -> dict[str, Any]:
+        # The rendered board below the JSON sections is the one canonical cage
+        # representation supplied to the model.  Do not repeat puzzle.puzzle or
+        # metadata.cages here: candidate-heavy KenKen requests otherwise grow by
+        # tens or hundreds of thousands of characters.
+        return {
+            "puzzle_id": puzzle.puzzle_id,
+            "size": puzzle.metadata.get("size"),
+            "difficulty": puzzle.difficulty,
+            "required_strategies": puzzle.required_strategies,
+            "transformation": puzzle.metadata.get("transformation"),
+        }
+
+    def prompt_ground_truth(self, puzzle: PuzzleRecord) -> dict[str, Any]:
+        truth = puzzle.ground_truth
+        # Full ground truth remains in samples.jsonl.  The model only needs one
+        # solved-grid representation and the conclusions required to ground its
+        # response; cages already appear in the rendered board.
+        return {
+            "solution_grid": truth.get("solution_grid"),
+            "validity_status": truth.get("validity_status"),
+            "solvability_status": truth.get("solvability_status"),
+            "unique_solution_status": truth.get("unique_solution_status"),
+            "solution_count": truth.get("solution_count"),
+            "structural_violations": list(truth.get("structural_violations", []))[:20],
+            "forced_values": self._limited_mapping(truth.get("forced_values", {}), 12),
+            "suggested_move": self._compact_suggested_move(truth.get("suggested_move")),
+        }
+
+    def _compact_tool_usage(self, tool_usage: dict[str, Any], puzzle: PuzzleRecord) -> dict[str, Any]:
+        tool_input = dict(tool_usage.get("tool_input") or {})
+        tool_input.pop("cages", None)
+        compact = {
+            "used": bool(tool_usage.get("used")),
+            "tool_name": tool_usage.get("tool_name"),
+            "reason": tool_usage.get("reason"),
+            "tool_input": tool_input or None,
+        }
+        output = dict(tool_usage.get("tool_output") or {})
+        tuples = output.get("cage_candidate_tuples")
+        if isinstance(tuples, dict):
+            selected_ids = self._select_prompt_cages(puzzle, tuples)
+            cage_lookup = {
+                str(cage.get("id")): cage
+                for cage in puzzle.metadata.get("cages", [])
+            }
+            output["cage_candidate_summary"] = {
+                cage_id: {
+                    "count": len(values),
+                    "examples": values[:8],
+                    "clue": {
+                        "target": cage_lookup.get(cage_id, {}).get("target"),
+                        "operation": cage_lookup.get(cage_id, {}).get("operation"),
+                        "cells": cage_lookup.get(cage_id, {}).get("cells", []),
+                    },
+                }
+                for cage_id in selected_ids
+                for values in [tuples[cage_id]]
+            }
+            output["candidate_summary_scope"] = {
+                "included_cages": len(selected_ids),
+                "total_cages": len(tuples),
+            }
+            output.pop("cage_candidate_tuples", None)
+            output["forced_values"] = self._limited_mapping(output.get("forced_values", {}), 12)
+
+        if "suggested_move" in output:
+            output["suggested_move"] = self._compact_suggested_move(output.get("suggested_move"))
+
+        evaluations = output.get("cage_evaluations")
+        if isinstance(evaluations, list):
+            failed = [item for item in evaluations if not item.get("satisfied", False)]
+            output["cage_evaluations"] = (failed or evaluations)[:8]
+            output["cage_evaluation_scope"] = {
+                "included": len(output["cage_evaluations"]),
+                "total": len(evaluations),
+                "failed_only": bool(failed),
+            }
+
+        # The compact ground-truth projection already carries the solved grid.
+        # Keep only the tool's verification conclusion, not a second solution.
+        if compact.get("tool_name") == "kenken_solution_verification":
+            output.pop("solution", None)
+            output.pop("solution_grid", None)
+        compact["tool_output"] = output
+        return compact
+
+    def _select_prompt_cages(self, puzzle: PuzzleRecord, tuples: dict[str, list[Any]]) -> list[str]:
+        selected: list[str] = []
+        suggested = puzzle.ground_truth.get("suggested_move") or {}
+        suggested_cell = suggested.get("cell")
+        for cage in puzzle.metadata.get("cages", []):
+            cage_id = str(cage.get("id"))
+            if suggested_cell in cage.get("cells", []) and cage_id in tuples:
+                selected.append(cage_id)
+
+        # Fill the small projection with the most constrained remaining cages.
+        for cage_id in sorted(tuples, key=lambda item: (len(tuples[item]), item)):
+            if cage_id not in selected:
+                selected.append(cage_id)
+            if len(selected) >= 3:
+                break
+        return selected[:3]
+
+    @staticmethod
+    def _limited_mapping(value: Any, limit: int) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        return dict(sorted(value.items())[:limit])
+
+    @staticmethod
+    def _compact_suggested_move(value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        compact = dict(value)
+        candidates = compact.pop("candidate_tuples", None)
+        if isinstance(candidates, list):
+            compact["candidate_tuple_summary"] = {
+                "count": len(candidates),
+                "examples": candidates[:8],
+            }
+        return compact
 
     def generation_guidance(self) -> str:
         return (

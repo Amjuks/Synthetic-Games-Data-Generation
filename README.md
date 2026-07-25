@@ -1,14 +1,14 @@
 # Synthetic Puzzle Conversation Data Generator
 
 ## Project Overview
-This project generates synthetic Sudoku and KenKen chat datasets with persistent job state, structured scenario generation, puzzle selection, validation, and diversity checks.
+This project generates synthetic Sudoku, KenKen, and Kakuro chat datasets with persistent job state, structured scenario generation, puzzle selection, validation, and diversity checks.
 
 Primary use case:
 - Build large puzzle conversation datasets for training, evaluation, or experimentation.
 
 Key features:
 - Generates `single_turn`, `multi_turn`, or both conversation types in one run.
-- Supports `sudoku` and solver-backed `kenken` through a domain adapter layer.
+- Supports `sudoku`, solver-backed `kenken`, and solver-backed `kakuro` through a domain adapter layer.
 - Uses structured scenarios instead of relying only on LLM creativity.
 - Selects puzzles from a persistent puzzle bank and creates transformed or edge-case variants.
 - Generates deterministic, domain-specific ground-truth metadata for each puzzle.
@@ -116,6 +116,7 @@ No additional external datasets are required by the current code. The current im
 python -m src.generator.cli --help
 python -m src.generator.cli run --domain sudoku --samples 5
 python -m src.generator.cli run --domain kenken --samples 5
+python -m src.generator.cli run --domain kakuro --samples 5
 python -m src.generator.cli status --job-name my_job
 ```
 
@@ -124,6 +125,7 @@ The project also exposes a console script from [pyproject.toml](C:/Users/emertxe
 ```bash
 sudoku-generator run --domain sudoku --samples 5
 puzzle-generator run --domain kenken --samples 5
+puzzle-generator run --domain kakuro --samples 5
 ```
 
 ### Commands
@@ -139,7 +141,7 @@ puzzle-generator run --domain kenken --samples 5
 | Name | Description | Type | Default | Allowed values | Required |
 |---|---|---:|---|---|---|
 | `--samples` | Total sample indexes to process. On resume, the new value replaces the previous target but cannot be lower than the number already completed. | int | `config.defaults.samples` -> `10` | positive integers | Optional |
-| `--domain` | Generation domain. | string | `config.defaults.domain` -> `sudoku` | `sudoku`, `kenken` | Optional |
+| `--domain` | Generation domain. | string | `config.defaults.domain` -> `sudoku` | `sudoku`, `kenken`, `kakuro` | Optional |
 | `--conversation-type` | Which conversation types to generate. | string | `config.defaults.conversation_type` -> `both` | `single_turn`, `multi_turn`, `both` | Optional |
 | `--max-turns` | Upper bound for generated multi-turn scenario length. | int | `config.defaults.max_turns` -> `6` | positive integers | Optional |
 | `--job-name` | Output job directory name. If omitted, a timestamp-based name is generated. | string | auto-generated | any filesystem-safe string | Optional |
@@ -426,6 +428,7 @@ The shared pipeline is orchestrated by `ConversationGenerator`, while domain beh
 Current supported domain:
 - `sudoku`
 - `kenken`
+- `kakuro`
 
 Each adapter owns domain-specific scenario generation, puzzle selection, tool decisions, validation, prompt context, prompts, and CSV row extensions. Unsupported domains fail with a clear error before generation starts.
 
@@ -447,6 +450,10 @@ Sudoku tool usage is scenario-driven. Examples include candidate scanning, board
 Every Sudoku puzzle also includes deterministic `ground_truth`, including the solution, rendered solved board, validity and solvability status, candidates, conflicts, given cells, empty cells, and a suggested move when available. This data is passed into the model prompt and stored in sample metadata.
 
 KenKen uses deterministic 4x4, 5x5, and 6x6 puzzle generation backed by a solution-counting solver. Its canonical `puzzle` value is JSON containing `size` and `cages`; the existing `board` field contains a stable text rendering. Ground truth includes the solved grid, structural violations, solver status, cage evaluations, viable cage tuples, forced values, and a suggested deduction. KenKen tools provide cage analysis, constraint validation, and solution verification.
+
+Kakuro uses deterministic 5x5, 7x7, and 9x9 crossword templates with generated fills and solver-derived uniqueness. Its canonical `puzzle` JSON stores blocked cells plus ordered across/down runs and clue sums. Ground truth includes the solution grid, structural and solvability status, run evaluations, compact distinct-digit combinations, cell candidates, and a suggested crossing-run deduction. Kakuro tools provide run analysis, constraint validation, and solution verification.
+
+Model prompts use domain projections rather than repeating complete stored ground truth. Full sample metadata remains in JSONL, while large candidate collections are summarized in requests to protect the model context window. KenKen sends its cage layout once in the rendered board, limits tool evidence to the three most constrained cages, and summarizes large candidate sets by count plus examples. `generation.max_prompt_characters` (default `50000`) prevents an oversized request from reaching the API and records a `prompt_budget_exceeded` event with the complete credential-free prompt.
 
 ## Pipeline Documentation
 For the internal execution model, stage-by-stage processing, sample lifecycle, and extension points, see [PIPELINE.md](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/PIPELINE.md).

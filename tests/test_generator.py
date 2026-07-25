@@ -34,6 +34,21 @@ class IndexedModelClient:
         return json.dumps(payload)
 
 
+class FailMultiTurnClient:
+    def __init__(self, fail_multi_turn: bool):
+        self.fail_multi_turn = fail_multi_turn
+        self.calls: list[str] = []
+
+    def generate(self, prompt: str) -> str:
+        conversation_type = "multi_turn" if '"conversation_type": "multi_turn"' in prompt else "single_turn"
+        self.calls.append(conversation_type)
+        if self.fail_multi_turn and conversation_type == "multi_turn":
+            raise RuntimeError("synthetic multi-turn failure")
+        if conversation_type == "multi_turn":
+            return json.dumps({"messages": [{"user": "MU", "response": "MR"}]})
+        return json.dumps({"prompt": "SU", "response": "SR"})
+
+
 def make_config(output_path: str) -> dict:
     return {
         "output_path": output_path,
@@ -147,6 +162,34 @@ def test_single_turn_parses_fenced_json_payload(tmp_path):
 
     assert output["prompt"] == "Is r1c1 valid?"
     assert output["response"] == "No, because of the column."
+    assert output["category"] == scenario.task_category
+    assert output["board"] == puzzle.rendered_board
+
+
+def test_parser_attaches_canonical_metadata_instead_of_model_values(tmp_path):
+    generator = ConversationGenerator(make_config(str(tmp_path)))
+    scenario = generator.domain.generate_scenario(
+        sample_index=0,
+        conversation_type="multi_turn",
+        max_turns=3,
+        distribution_stats={},
+    )
+    puzzle = generator.domain.select_problem(scenario, 0)
+
+    output = generator._parse_output(
+        json.dumps({
+            "conversation_type": "single_turn",
+            "category": "wrong_category",
+            "board": "invented or solved board",
+            "messages": [{"user": "U", "response": "R"}],
+        }),
+        scenario,
+        puzzle,
+    )
+
+    assert output["conversation_type"] == "multi_turn"
+    assert output["category"] == scenario.task_category
+    assert output["board"] == puzzle.rendered_board
 
 
 def test_generated_sample_includes_domain_ground_truth_and_tool_usage(tmp_path):
@@ -224,7 +267,7 @@ def test_run_writes_metadata_and_csv_incrementally(tmp_path):
     assert len(csv_rows) == 2
     assert progress["status"] == "completed"
     assert progress["accepted_samples"] == 2
-    assert progress["rejected_samples"] == 0
+    assert progress["rejected_samples"] == 1
 
 
 def test_run_resumes_after_failure(tmp_path):
@@ -327,3 +370,30 @@ def test_resumed_job_uses_new_sample_total_without_undoing_completed_work(tmp_pa
     assert generator._resolve_target_total({"total": 10, "completed": 2}, 5) == 5
     assert generator._resolve_target_total({"total": 10, "completed": 2}, 1) == 2
     assert generator._resolve_target_total({"total": 3, "completed": 2}, 12) == 12
+
+
+def test_resume_skips_conversation_type_already_written_for_partial_index(tmp_path):
+    config = make_config(str(tmp_path))
+    first = ConversationGenerator(config)
+    first.model_client = FailMultiTurnClient(fail_multi_turn=True)
+
+    try:
+        first.run(samples=1, conversation_type="both", job_name="partial-job")
+    except RuntimeError as exc:
+        assert "synthetic multi-turn failure" in str(exc)
+    else:
+        raise AssertionError("Expected the multi-turn half to fail")
+
+    metadata_path = tmp_path / "partial-job" / "samples.jsonl"
+    first_rows = [json.loads(line) for line in metadata_path.read_text(encoding="utf-8").splitlines()]
+    assert [row["conversation_type"] for row in first_rows] == ["single_turn"]
+
+    resumed = ConversationGenerator(config)
+    resumed_client = FailMultiTurnClient(fail_multi_turn=False)
+    resumed.model_client = resumed_client
+    result = resumed.run(samples=1, conversation_type="both", job_name="partial-job")
+
+    final_rows = [json.loads(line) for line in metadata_path.read_text(encoding="utf-8").splitlines()]
+    assert resumed_client.calls == ["multi_turn"]
+    assert [row["conversation_type"] for row in final_rows] == ["single_turn", "multi_turn"]
+    assert result["accepted_samples"] == 2

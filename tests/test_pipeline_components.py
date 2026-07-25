@@ -141,3 +141,35 @@ def test_similarity_checker_allows_related_transformed_puzzles(tmp_path):
 
     assert result.accepted is True
     assert result.metrics["puzzle_similarity"] < 1.0
+
+
+def test_similarity_checker_allows_same_puzzle_with_distinct_conversation(tmp_path):
+    checker = SimilarityDiversityChecker(make_config(str(tmp_path)))
+    history = [{
+        "scenario": {"task_category": "hint", "conversation_type": "single_turn"},
+        "puzzle_metadata": {"puzzle_id": "same-puzzle", "canonical_signature": "root"},
+        "output": {
+            "conversation_type": "single_turn",
+            "prompt": "Give me a small hint about the first run.",
+            "response": "Compare the two crossing sums.",
+            "board": "board",
+        },
+        "turns": 1,
+    }]
+    candidate = {
+        "scenario": {"task_category": "rules_explanation", "conversation_type": "single_turn"},
+        "puzzle_metadata": {"puzzle_id": "same-puzzle", "canonical_signature": "root"},
+        "output": {
+            "conversation_type": "single_turn",
+            "prompt": "Why can a digit not repeat inside a Kakuro run?",
+            "response": "Kakuro requires distinct digits within every across and down sum.",
+            "board": "board",
+        },
+        "turns": 1,
+    }
+
+    result = checker.assess(candidate, history)
+
+    assert result.accepted is True
+    assert result.metrics["puzzle_similarity"] == 1.0
+    assert result.similarity_score < 1.0

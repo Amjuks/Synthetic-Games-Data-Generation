@@ -17,6 +17,7 @@ class SimilarityDiversityChecker:
         self.related_edge_case_puzzle_similarity = float(
             similarity_config.get("related_edge_case_puzzle_similarity", 0.55)
         )
+        self.contextual_text_floor = float(similarity_config.get("contextual_similarity_text_floor", 0.75))
         self.thresholds = {
             "exact_duplicate": float(similarity_config.get("exact_duplicate_threshold", 1.0)),
             "normalized_duplicate": float(similarity_config.get("normalized_duplicate_threshold", 1.0)),
@@ -31,7 +32,8 @@ class SimilarityDiversityChecker:
         if not history:
             return SimilarityResult(accepted=True, similarity_score=0.0, metrics={})
 
-        candidate_text = self._conversation_text(candidate)
+        candidate_output = candidate.get("output", candidate)
+        candidate_text = self._conversation_text(candidate_output)
         candidate_normalized = self._normalize_text(candidate_text)
         candidate_ngrams = self._ngrams(candidate_normalized)
         candidate_vector = self._token_vector(candidate_normalized)
@@ -51,7 +53,7 @@ class SimilarityDiversityChecker:
             normalized_duplicate = 1.0 if candidate_normalized == existing_normalized else 0.0
             ngram_overlap = self._jaccard(candidate_ngrams, existing_ngrams)
             embedding_similarity = self._cosine_similarity(candidate_vector, existing_vector)
-            structural_similarity = self._structural_similarity(candidate, existing_output)
+            structural_similarity = self._structural_similarity(candidate_output, existing_output)
             scenario_similarity = self._scenario_similarity(candidate.get("scenario", {}), existing.get("scenario", {}))
             puzzle_similarity = self._puzzle_similarity(candidate.get("puzzle_metadata", {}), existing.get("puzzle_metadata", {}))
 
@@ -64,18 +66,36 @@ class SimilarityDiversityChecker:
                 "scenario_similarity": scenario_similarity,
                 "puzzle_similarity": puzzle_similarity,
             }
-            score = max(metrics.values())
+            text_metric_names = {
+                "exact_duplicate",
+                "normalized_duplicate",
+                "ngram_overlap",
+                "embedding_similarity",
+            }
+            text_reasons = [
+                name
+                for name in text_metric_names
+                if metrics[name] >= self.thresholds.get(name, 1.1)
+            ]
+            contextual_reasons = [
+                name
+                for name in ("structural_similarity", "scenario_similarity", "puzzle_similarity")
+                if metrics[name] >= self.thresholds.get(name, 1.1)
+            ]
+            text_support = max(ngram_overlap, embedding_similarity)
+            reasons = text_reasons + (contextual_reasons if text_support >= self.contextual_text_floor else [])
+            score = max(metrics[name] for name in text_metric_names)
             if score > best_score:
                 best_score = score
                 best_metrics = metrics
-                best_reasons = [name for name, value in metrics.items() if value >= self.thresholds.get(name, 1.1)]
+                best_reasons = reasons
 
-            if best_reasons:
+            if reasons:
                 return SimilarityResult(
                     accepted=False,
-                    similarity_score=best_score,
-                    reasons=best_reasons,
-                    metrics=best_metrics,
+                    similarity_score=score,
+                    reasons=reasons,
+                    metrics=metrics,
                 )
 
         return SimilarityResult(
@@ -151,7 +171,7 @@ class SimilarityDiversityChecker:
         right_norm = math.sqrt(sum(value * value for value in right.values()))
         if left_norm == 0 or right_norm == 0:
             return 0.0
-        return numerator / (left_norm * right_norm)
+        return min(1.0, max(0.0, numerator / (left_norm * right_norm)))
 
     def _structural_similarity(self, left: dict[str, Any], right: dict[str, Any]) -> float:
         left_messages = left.get("messages", [])

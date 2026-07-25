@@ -55,3 +55,27 @@ domains:
       - beginner_question
       - advanced_question
       - general_chat
+  kakuro:
+    system_prompt: |
+      You are a helpful Kakuro (Cross Sums) assistant. Generate natural conversations about across/down sums, distinct-digit combinations, crossing-run deductions, hints, and gameplay.
+      Follow the supplied grid, clues, scenario, and ground truth exactly.
+      Never invent or alter the puzzle representation unless malformed input is explicitly required.
+    single_turn_prompt: |
+      Create a concise single-turn Kakuro exchange grounded in the supplied crossword grid and across/down clues.
+      Respect the requested expertise, tone, assistant style, edge case, and tool usage.
+    multi_turn_prompt: |
+      Create a natural Kakuro conversation with 2 to {max_turns} exchanges.
+      Each exchange must contain a user message and its corresponding response.
+      Progress through run combinations, crossing constraints, hints, corrections, or deeper strategy as required.
+    conversation_categories:
+      - next_best_move
+      - validity_check
+      - rules_explanation
+      - solve_puzzle
+      - run_analysis
+      - hint
+      - mistake_correction
+      - technique_discussion
+      - beginner_question
+      - advanced_question
+      - general_chat

@@ -26,6 +26,9 @@ class ConversationGenerator:
         self.diversity_checker = SimilarityDiversityChecker(self.config)
         self.generation_model = self.config.get("model", {}).get("model_name", "unknown-model")
         self.max_regeneration_attempts = int(self.config.get("generation", {}).get("max_regeneration_attempts", 3))
+        self.max_prompt_characters = int(
+            self.config.get("generation", {}).get("max_prompt_characters", 50_000)
+        )
         self.event_logger: GenerationEventLogger | None = None
         self.last_model_error_details: dict[str, Any] | None = None
 
@@ -64,7 +67,7 @@ class ConversationGenerator:
         distribution_stats = self.diversity_checker.summarize_distribution(history)
         resume_state = job_manager.get_resume_state()
         completed = resume_state["completed"]
-        accepted_samples = int(status.get("accepted_samples", len(history)) or len(history))
+        accepted_samples = max(int(status.get("accepted_samples", 0) or 0), len(history))
         rejected_samples = max(int(status.get("rejected_samples", 0) or 0), storage.get_rejected_count())
         start_index = resume_state["next_sample_index"]
 
@@ -249,8 +252,17 @@ class ConversationGenerator:
         accepted: list[dict[str, Any]] = []
         rejected = 0
         generation_types = ["single_turn", "multi_turn"] if conversation_type == "both" else [conversation_type]
+        already_accepted = self._accepted_generation_types_for_index(history, sample_index)
 
         for generation_type in generation_types:
+            if generation_type in already_accepted:
+                if self.event_logger is not None:
+                    self.event_logger.log(
+                        "generation_type_already_accepted",
+                        sample_index=sample_index,
+                        generation_type=generation_type,
+                    )
+                continue
             accepted_sample, rejected_count = self._generate_validated_sample(
                 sample_index=sample_index,
                 generation_type=generation_type,
@@ -263,6 +275,23 @@ class ConversationGenerator:
             rejected += rejected_count
 
         return {"accepted": accepted, "rejected": rejected}
+
+    def _accepted_generation_types_for_index(
+        self,
+        history: list[dict[str, Any]],
+        sample_index: int,
+    ) -> set[str]:
+        accepted: set[str] = set()
+        for sample in history:
+            recorded_index = sample.get("metadata", {}).get("dataset_sample_index")
+            if recorded_index is None:
+                scenario_index = sample.get("scenario", {}).get("metadata", {}).get("sample_index")
+                if scenario_index is None:
+                    continue
+                recorded_index = int(scenario_index) // self.max_regeneration_attempts
+            if int(recorded_index) == sample_index:
+                accepted.add(str(sample.get("conversation_type", "")))
+        return accepted
 
     def _generate_validated_sample(
         self,
@@ -330,6 +359,11 @@ class ConversationGenerator:
                 validation_status="passed",
             )
             candidate_dict = candidate_sample.to_dict()
+            candidate_dict["metadata"] = {
+                **candidate_dict.get("metadata", {}),
+                "dataset_sample_index": sample_index,
+                "generation_attempt": attempt,
+            }
             similarity_result = self.diversity_checker.assess(candidate_dict, history)
             if not similarity_result.accepted:
                 rejected_count += 1
@@ -355,7 +389,19 @@ class ConversationGenerator:
 
         raise RuntimeError(
             f"Unable to generate a valid diverse {generation_type} sample for sample_index={sample_index} "
-            f"after {self.max_regeneration_attempts} attempts. Last rejection: {rejection_reasons[-1] if rejection_reasons else 'unknown'}"
+            f"after {self.max_regeneration_attempts} attempts. "
+            f"Last rejection: {self._rejection_summary(rejection_reasons)}. "
+            f"See {storage.rejected_path} for complete details."
+        )
+
+    def _rejection_summary(self, rejections: list[dict[str, Any]]) -> str:
+        if not rejections:
+            return "unknown"
+        rejection = rejections[-1]
+        return (
+            f"type={rejection.get('rejection_type', 'unknown')}, "
+            f"attempt={rejection.get('attempt', 'unknown')}, "
+            f"reasons={rejection.get('reasons', [])}"
         )
 
     def _generate_output(
@@ -439,9 +485,9 @@ class ConversationGenerator:
 
     def _build_generation_prompt(self, scenario: Scenario, puzzle: PuzzleRecord, tool_usage: dict[str, Any]) -> str:
         output_schema = (
-            "Return minified JSON with keys: prompt, response, conversation_type, category, board."
+            "Return minified JSON with keys: prompt, response."
             if scenario.conversation_type == "single_turn"
-            else "Return minified JSON with keys: messages, conversation_type, category, board. "
+            else "Return minified JSON with key: messages. "
                  "messages must be a list of objects with keys: user, response."
         )
         prompt_template = (
@@ -449,19 +495,52 @@ class ConversationGenerator:
             if scenario.conversation_type == "single_turn"
             else self.prompts.get("multi_turn_prompt", "").format(max_turns=scenario.num_turns)
         )
-        return (
+        problem_projector = getattr(self.domain, "prompt_problem", None)
+        if callable(problem_projector):
+            prompt_problem = problem_projector(puzzle)
+        else:
+            prompt_problem = puzzle.to_dict()
+            prompt_problem.pop("ground_truth", None)
+        truth_projector = getattr(self.domain, "prompt_ground_truth", None)
+        prompt_ground_truth = (
+            truth_projector(puzzle) if callable(truth_projector) else puzzle.ground_truth
+        )
+        prompt = (
             f"{self.prompts.get('system_prompt', '')}\n\n"
             f"{prompt_template}\n\n"
             f"Domain: {self.domain_name}\n\n"
             f"Scenario JSON:\n{json.dumps(scenario.to_dict(), ensure_ascii=False)}\n\n"
-            f"Puzzle JSON:\n{json.dumps(puzzle.to_dict(), ensure_ascii=False)}\n\n"
-            f"Ground Truth JSON:\n{json.dumps(puzzle.ground_truth, ensure_ascii=False)}\n\n"
+            f"Puzzle JSON:\n{json.dumps(prompt_problem, ensure_ascii=False)}\n\n"
+            f"Ground Truth JSON:\n{json.dumps(prompt_ground_truth, ensure_ascii=False)}\n\n"
             f"Tool Context JSON:\n{json.dumps(self.domain.prompt_context(scenario, puzzle, tool_usage), ensure_ascii=False)}\n\n"
             f"Puzzle board:\n{puzzle.rendered_board}\n\n"
             f"Output schema:\n{output_schema}\n"
             f"{self.domain.generation_guidance()}\n"
-            "Keep the task category aligned with the scenario.\n"
+            "Do not return the puzzle board, category, or conversation type; the pipeline attaches those fields.\n"
         )
+        if self.max_prompt_characters > 0 and len(prompt) > self.max_prompt_characters:
+            message = (
+                "Prompt exceeds the configured local context budget: "
+                f"domain={self.domain_name}, puzzle_id={puzzle.puzzle_id}, "
+                f"scenario_id={scenario.scenario_id}, characters={len(prompt)}, "
+                f"limit={self.max_prompt_characters}. The model API was not called."
+            )
+            if self.event_logger is not None:
+                self.event_logger.log(
+                    "prompt_budget_exceeded",
+                    level="ERROR",
+                    domain=self.domain_name,
+                    puzzle_id=puzzle.puzzle_id,
+                    scenario_id=scenario.scenario_id,
+                    task_category=scenario.task_category,
+                    edge_case=scenario.edge_case,
+                    prompt_characters=len(prompt),
+                    max_prompt_characters=self.max_prompt_characters,
+                    prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+                    prompt=prompt,
+                )
+            raise ValueError(message)
+        return prompt
 
     def _parse_output(self, raw_output: str, scenario: Scenario, puzzle: PuzzleRecord) -> dict[str, Any]:
         payload = self._load_json_payload(raw_output)
@@ -478,17 +557,17 @@ class ConversationGenerator:
         if scenario.conversation_type == "multi_turn":
             payload = {
                 "conversation_type": "multi_turn",
-                "category": payload.get("category", scenario.task_category),
+                "category": scenario.task_category,
                 "messages": self._normalize_messages(payload),
-                "board": payload.get("board", puzzle.rendered_board),
+                "board": puzzle.rendered_board,
             }
         else:
             payload = {
                 "conversation_type": "single_turn",
-                "category": payload.get("category", scenario.task_category),
+                "category": scenario.task_category,
                 "prompt": payload.get("prompt", payload.get("user", "")),
                 "response": payload.get("response", payload.get("assistant", "")),
-                "board": payload.get("board", puzzle.rendered_board),
+                "board": puzzle.rendered_board,
             }
         return payload
 

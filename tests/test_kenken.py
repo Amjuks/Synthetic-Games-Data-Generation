@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from src.generator.config import get_config, resolve_domain_config
 from src.generator.domains import get_domain_adapter
 from src.generator.generator import ConversationGenerator
@@ -200,3 +202,52 @@ def test_existing_job_can_resume_with_different_settings(tmp_path):
     assert progress["configuration_history"][-1]["changes"] == progress["resume_configuration_changes"]
     log_text = (tmp_path / "domain-locked" / "generation.log").read_text(encoding="utf-8")
     assert "resume_configuration_changed" in log_text
+
+
+def test_largest_kenken_prompts_use_compact_solver_projections(tmp_path):
+    generator = ConversationGenerator(kenken_config(tmp_path))
+    cases = [
+        scenario(difficulty="expert", task="cage_analysis", tool="cage_candidate_scan"),
+        scenario(
+            edge_case="ambiguous_puzzle",
+            difficulty="expert",
+            task="validity_check",
+            tool="cage_constraint_check",
+        ),
+        scenario(difficulty="expert", task="solve_puzzle", tool="solution_verification"),
+    ]
+
+    for index, selected_scenario in enumerate(cases):
+        puzzle = generator.domain.select_problem(selected_scenario, index)
+        tool_usage = generator.domain.maybe_use_tool(selected_scenario, puzzle)
+        prompt = generator._build_generation_prompt(selected_scenario, puzzle, tool_usage)
+
+        assert len(prompt) < 10_000
+        assert '"cages"' not in prompt
+        assert "cage_candidate_tuples" not in prompt
+        assert prompt.count("Cage layout:") == 1
+        # Prompt compaction must not alter complete persisted ground truth.
+        assert "cages" in puzzle.ground_truth
+        assert "cage_candidate_tuples" in puzzle.ground_truth
+
+
+def test_prompt_budget_stops_request_before_model_call(tmp_path):
+    config = kenken_config(tmp_path)
+    config["generation"]["max_prompt_characters"] = 100
+    generator = ConversationGenerator(config)
+    selected_scenario = scenario()
+    puzzle = generator.domain.select_problem(selected_scenario, 0)
+    tool_usage = generator.domain.maybe_use_tool(selected_scenario, puzzle)
+
+    class ModelThatMustNotRun:
+        called = False
+
+        def generate(self, prompt):
+            self.called = True
+            raise AssertionError("model should not be called")
+
+    model = ModelThatMustNotRun()
+    generator.model_client = model
+    with pytest.raises(ValueError, match="model API was not called"):
+        generator._generate_output(selected_scenario, puzzle, tool_usage)
+    assert not model.called

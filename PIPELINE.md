@@ -6,6 +6,7 @@ The generator is now structured as a shared pipeline plus a domain adapter. The 
 Registered domains:
 - `sudoku`
 - `kenken`
+- `kakuro`
 
 High-level flow:
 
@@ -28,6 +29,7 @@ Implementation:
 - `src/generator/domains/__init__.py`
 - `src/generator/domains/sudoku.py`
 - `src/generator/domains/kenken.py`
+- `src/generator/domains/kakuro.py`
 
 Input:
 - domain name from config or `--domain`
@@ -136,6 +138,11 @@ Current KenKen tools:
 - `kenken_cage_analysis`
 - `kenken_constraint_validation`
 - `kenken_solution_verification`
+
+Current Kakuro tools:
+- `kakuro_run_analysis`
+- `kakuro_constraint_validation`
+- `kakuro_solution_verification`
 
 Tool output is included in:
 - prompt context sent to the model
@@ -320,6 +327,8 @@ Lifecycle summary:
 ## Request And Error Logs
 Each job appends a readable `generation.log` and structured `generation_events.jsonl`. Model-call events record the sample and retry context, scenario and puzzle IDs, provider/model settings, prompt size and SHA-256, full request payload without credentials, raw successful response, or the exception and traceback. On failure, `progress.json.last_error_details` identifies the failed event and both log paths.
 
+Before a model call, the generator enforces `generation.max_prompt_characters` (50,000 by default). An over-budget request is not sent; a `prompt_budget_exceeded` event records its exact size, scenario, puzzle, hash, and full credential-free prompt. KenKen projections keep the rendered cage layout as the sole full cage representation and reduce solver candidates to deterministic counts and short examples.
+
 ## Extensibility
 ### Add A New Domain
 1. Create a new adapter under `src/generator/domains/`.
@@ -344,7 +353,7 @@ The expected tool usage record shape is:
 ```
 
 ### Add Stronger Ground Truth
-Sudoku ground truth lives in `src/generator/puzzles.py`; solver-backed KenKen ground truth lives in `src/generator/kenken.py`.
+Sudoku ground truth lives in `src/generator/puzzles.py`; solver-backed KenKen and Kakuro ground truth live in their respective domain engine modules.
 
 ### Add Stronger Validation
 The validator lives in `src/generator/validation.py` and is invoked through the domain adapter. Solver-backed checks can be added there without changing storage or model code.
@@ -353,6 +362,7 @@ The validator lives in `src/generator/validation.py` and is invoked through the 
 - No external puzzle corpus import exists yet.
 - No true Sudoku solver or uniqueness verifier is implemented yet.
 - KenKen base puzzles and edge-case classifications are solver verified.
+- Kakuro base puzzles and edge-case classifications are solver verified.
 - `embedding_similarity` currently means local token-vector cosine similarity.
 - There is no concurrency, batching, or distributed job execution.
 - Configuration is YAML plus environment variables only.
