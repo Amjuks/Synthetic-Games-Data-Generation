@@ -1,14 +1,14 @@
 # Synthetic Puzzle Conversation Data Generator
 
 ## Project Overview
-This project generates synthetic Sudoku, KenKen, and Kakuro chat datasets with persistent job state, structured scenario generation, puzzle selection, validation, and diversity checks.
+This project generates synthetic Sudoku, KenKen, Kakuro, and Star Battle chat datasets with persistent job state, structured scenario generation, puzzle selection, validation, and diversity checks.
 
 Primary use case:
 - Build large puzzle conversation datasets for training, evaluation, or experimentation.
 
 Key features:
 - Generates `single_turn`, `multi_turn`, or both conversation types in one run.
-- Supports `sudoku`, solver-backed `kenken`, and solver-backed `kakuro` through a domain adapter layer.
+- Supports `sudoku`, solver-backed `kenken`, solver-backed `kakuro`, and solver-backed `starbattle` through a domain adapter layer.
 - Uses structured scenarios instead of relying only on LLM creativity.
 - Selects puzzles from a persistent puzzle bank and creates transformed or edge-case variants.
 - Generates deterministic, domain-specific ground-truth metadata for each puzzle.
@@ -117,6 +117,7 @@ python -m src.generator.cli --help
 python -m src.generator.cli run --domain sudoku --samples 5
 python -m src.generator.cli run --domain kenken --samples 5
 python -m src.generator.cli run --domain kakuro --samples 5
+python -m src.generator.cli run --domain starbattle --samples 5
 python -m src.generator.cli status --job-name my_job
 ```
 
@@ -126,6 +127,7 @@ The project also exposes a console script from [pyproject.toml](C:/Users/emertxe
 sudoku-generator run --domain sudoku --samples 5
 puzzle-generator run --domain kenken --samples 5
 puzzle-generator run --domain kakuro --samples 5
+puzzle-generator run --domain starbattle --samples 5
 ```
 
 ### Commands
@@ -141,7 +143,7 @@ puzzle-generator run --domain kakuro --samples 5
 | Name | Description | Type | Default | Allowed values | Required |
 |---|---|---:|---|---|---|
 | `--samples` | Total sample indexes to process. On resume, the new value replaces the previous target but cannot be lower than the number already completed. | int | `config.defaults.samples` -> `10` | positive integers | Optional |
-| `--domain` | Generation domain. | string | `config.defaults.domain` -> `sudoku` | `sudoku`, `kenken`, `kakuro` | Optional |
+| `--domain` | Generation domain. | string | `config.defaults.domain` -> `sudoku` | `sudoku`, `kenken`, `kakuro`, `starbattle` | Optional |
 | `--conversation-type` | Which conversation types to generate. | string | `config.defaults.conversation_type` -> `both` | `single_turn`, `multi_turn`, `both` | Optional |
 | `--max-turns` | Upper bound for generated multi-turn scenario length. | int | `config.defaults.max_turns` -> `6` | positive integers | Optional |
 | `--job-name` | Output job directory name. If omitted, a timestamp-based name is generated. | string | auto-generated | any filesystem-safe string | Optional |
@@ -429,6 +431,7 @@ Current supported domain:
 - `sudoku`
 - `kenken`
 - `kakuro`
+- `starbattle`
 
 Each adapter owns domain-specific scenario generation, puzzle selection, tool decisions, validation, prompt context, prompts, and CSV row extensions. Unsupported domains fail with a clear error before generation starts.
 
@@ -452,6 +455,8 @@ Every Sudoku puzzle also includes deterministic `ground_truth`, including the so
 KenKen uses deterministic 4x4, 5x5, and 6x6 puzzle generation backed by a solution-counting solver. Its canonical `puzzle` value is JSON containing `size` and `cages`; the existing `board` field contains a stable text rendering. Ground truth includes the solved grid, structural violations, solver status, cage evaluations, viable cage tuples, forced values, and a suggested deduction. KenKen tools provide cage analysis, constraint validation, and solution verification.
 
 Kakuro uses deterministic 5x5, 7x7, and 9x9 crossword templates with generated fills and solver-derived uniqueness. Its canonical `puzzle` JSON stores blocked cells plus ordered across/down runs and clue sums. Ground truth includes the solution grid, structural and solvability status, run evaluations, compact distinct-digit combinations, cell candidates, and a suggested crossing-run deduction. Kakuro tools provide run analysis, constraint validation, and solution verification.
+
+Star Battle uses deterministic, connected-region 5x5, 6x6, and 7x7 layouts backed by a solution-counting solver. Its canonical `puzzle` JSON stores `size`, `stars_per_unit`, and complete region membership; its solution string uses `*` and `.` in row-major order. Ground truth verifies row, column, region, and non-touching constraints and records solver classification, region evaluations, forced cells, and a suggested deduction. Star Battle tools provide candidate analysis, constraint validation, and solution verification.
 
 Model prompts use domain projections rather than repeating complete stored ground truth. Full sample metadata remains in JSONL, while large candidate collections are summarized in requests to protect the model context window. KenKen sends its cage layout once in the rendered board, limits tool evidence to the three most constrained cages, and summarizes large candidate sets by count plus examples. `generation.max_prompt_characters` (default `50000`) prevents an oversized request from reaching the API and records a `prompt_budget_exceeded` event with the complete credential-free prompt.
 

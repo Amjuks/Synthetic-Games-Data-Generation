@@ -7,6 +7,7 @@ Registered domains:
 - `sudoku`
 - `kenken`
 - `kakuro`
+- `starbattle`
 
 High-level flow:
 
@@ -30,6 +31,7 @@ Implementation:
 - `src/generator/domains/sudoku.py`
 - `src/generator/domains/kenken.py`
 - `src/generator/domains/kakuro.py`
+- `src/generator/domains/starbattle.py`
 
 Input:
 - domain name from config or `--domain`
@@ -143,6 +145,11 @@ Current Kakuro tools:
 - `kakuro_run_analysis`
 - `kakuro_constraint_validation`
 - `kakuro_solution_verification`
+
+Current Star Battle tools:
+- `starbattle_candidate_analysis`
+- `starbattle_constraint_validation`
+- `starbattle_solution_verification`
 
 Tool output is included in:
 - prompt context sent to the model
@@ -353,7 +360,7 @@ The expected tool usage record shape is:
 ```
 
 ### Add Stronger Ground Truth
-Sudoku ground truth lives in `src/generator/puzzles.py`; solver-backed KenKen and Kakuro ground truth live in their respective domain engine modules.
+Sudoku ground truth lives in `src/generator/puzzles.py`; solver-backed KenKen, Kakuro, and Star Battle ground truth live in their respective domain engine modules.
 
 ### Add Stronger Validation
 The validator lives in `src/generator/validation.py` and is invoked through the domain adapter. Solver-backed checks can be added there without changing storage or model code.
@@ -363,6 +370,7 @@ The validator lives in `src/generator/validation.py` and is invoked through the 
 - No true Sudoku solver or uniqueness verifier is implemented yet.
 - KenKen base puzzles and edge-case classifications are solver verified.
 - Kakuro base puzzles and edge-case classifications are solver verified.
+- Star Battle base puzzles and edge-case classifications are solver verified.
 - `embedding_similarity` currently means local token-vector cosine similarity.
 - There is no concurrency, batching, or distributed job execution.
 - Configuration is YAML plus environment variables only.

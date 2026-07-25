@@ -206,3 +206,60 @@ defaults:
           - run_candidate_scan
           - sum_constraint_check
           - solution_verification
+    starbattle:
+      puzzles:
+        persistent_bank_filename: starbattle_puzzle_bank.jsonl
+        usage_stats_filename: starbattle_puzzle_usage.json
+      scenario:
+        task_categories:
+          - next_best_move
+          - validity_check
+          - rules_explanation
+          - solve_puzzle
+          - region_analysis
+          - hint
+          - mistake_correction
+          - technique_discussion
+          - beginner_question
+          - advanced_question
+          - general_chat
+        difficulty_levels:
+          - easy
+          - medium
+          - hard
+          - expert
+        user_expertise_levels:
+          - beginner
+          - intermediate
+          - advanced
+          - expert
+        user_personalities:
+          - careful
+          - impatient
+          - curious
+          - skeptical
+          - analytical
+        assistant_styles:
+          - concise
+          - coaching
+          - explanatory
+          - Socratic
+          - supportive
+        tones:
+          - neutral
+          - friendly
+          - urgent
+          - frustrated
+          - academic
+        edge_cases:
+          - none
+          - incorrect_assumption
+          - invalid_regions
+          - ambiguous_puzzle
+          - unsolvable_puzzle
+          - malformed_input
+        tool_usage_modes:
+          - none
+          - candidate_scan
+          - constraint_check
+          - solution_verification

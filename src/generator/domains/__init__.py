@@ -5,6 +5,7 @@ from typing import Any
 from ..config import resolve_domain_config
 from .kakuro import KakuroDomainAdapter
 from .kenken import KenKenDomainAdapter
+from .starbattle import StarBattleDomainAdapter
 from .sudoku import SudokuDomainAdapter
 
 
@@ -12,6 +13,7 @@ SUPPORTED_DOMAINS = {
     "sudoku": SudokuDomainAdapter,
     "kenken": KenKenDomainAdapter,
     "kakuro": KakuroDomainAdapter,
+    "starbattle": StarBattleDomainAdapter,
 }
 
 
