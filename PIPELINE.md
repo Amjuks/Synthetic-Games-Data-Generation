@@ -8,6 +8,8 @@ Registered domains:
 - `kenken`
 - `kakuro`
 - `starbattle`
+- `nonogram`
+- `hitori`
 
 High-level flow:
 
@@ -32,6 +34,8 @@ Implementation:
 - `src/generator/domains/kenken.py`
 - `src/generator/domains/kakuro.py`
 - `src/generator/domains/starbattle.py`
+- `src/generator/domains/nonogram.py`
+- `src/generator/domains/hitori.py`
 
 Input:
 - domain name from config or `--domain`
@@ -150,6 +154,16 @@ Current Star Battle tools:
 - `starbattle_candidate_analysis`
 - `starbattle_constraint_validation`
 - `starbattle_solution_verification`
+
+Current Nonogram tools:
+- `nonogram_line_analysis`
+- `nonogram_constraint_validation`
+- `nonogram_solution_verification`
+
+Current Hitori tools:
+- `hitori_duplicate_analysis`
+- `hitori_constraint_validation`
+- `hitori_solution_verification`
 
 Tool output is included in:
 - prompt context sent to the model
@@ -360,7 +374,7 @@ The expected tool usage record shape is:
 ```
 
 ### Add Stronger Ground Truth
-Sudoku ground truth lives in `src/generator/puzzles.py`; solver-backed KenKen, Kakuro, and Star Battle ground truth live in their respective domain engine modules.
+Sudoku ground truth lives in `src/generator/puzzles.py`; solver-backed KenKen, Kakuro, Star Battle, Nonogram, and Hitori ground truth live in their respective domain engine modules.
 
 ### Add Stronger Validation
 The validator lives in `src/generator/validation.py` and is invoked through the domain adapter. Solver-backed checks can be added there without changing storage or model code.
@@ -371,6 +385,8 @@ The validator lives in `src/generator/validation.py` and is invoked through the 
 - KenKen base puzzles and edge-case classifications are solver verified.
 - Kakuro base puzzles and edge-case classifications are solver verified.
 - Star Battle base puzzles and edge-case classifications are solver verified.
+- Nonogram base puzzles and edge-case classifications are solver verified.
+- Hitori base puzzles and edge-case classifications are solver verified.
 - `embedding_similarity` currently means local token-vector cosine similarity.
 - There is no concurrency, batching, or distributed job execution.
 - Configuration is YAML plus environment variables only.

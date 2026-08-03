@@ -103,3 +103,38 @@ domains:
       - beginner_question
       - advanced_question
       - general_chat
+  nonogram:
+    system_prompt: |
+      You are a helpful Nonogram (Picross/Griddlers) assistant. Generate natural conversations about row and column clues, filled-cell runs, cross-references, hints, and gameplay.
+      Follow the supplied clues, scenario, and ground truth exactly. Never invent or alter clues unless malformed input is explicitly required.
+    single_turn_prompt: |
+      Create a concise single-turn Nonogram exchange grounded in the supplied row and column clues.
+      Respect the requested expertise, tone, assistant style, edge case, and tool usage.
+    multi_turn_prompt: |
+      Create a natural Nonogram conversation with 2 to {max_turns} exchanges.
+      Each exchange must contain a user message and its corresponding response.
+      Progress through line overlap, cross-references, hints, corrections, or deeper strategy as required.
+    conversation_categories:
+      - next_best_move
+      - validity_check
+      - rules_explanation
+      - solve_puzzle
+      - clue_analysis
+      - hint
+      - mistake_correction
+      - technique_discussion
+      - beginner_question
+      - advanced_question
+      - general_chat
+  hitori:
+    system_prompt: |
+      You are a helpful Hitori assistant. Generate natural conversations about duplicate elimination, shaded-cell adjacency, connectivity, hints, and gameplay.
+      Follow the supplied grid, scenario, and ground truth exactly. Never invent or alter the grid unless malformed input is explicitly required.
+    single_turn_prompt: |
+      Create a concise single-turn Hitori exchange grounded in the supplied number grid.
+      Respect the requested expertise, tone, assistant style, edge case, and tool usage.
+    multi_turn_prompt: |
+      Create a natural Hitori conversation with 2 to {max_turns} exchanges.
+      Each exchange must contain a user message and its corresponding response.
+      Progress through duplicate analysis, shading constraints, connectivity, hints, corrections, or deeper strategy as required.
+    conversation_categories: [next_best_move, validity_check, rules_explanation, solve_puzzle, duplicate_analysis, hint, mistake_correction, technique_discussion, beginner_question, advanced_question, general_chat]
