@@ -66,6 +66,23 @@ def test_fen_parser_preserves_all_state_fields_and_en_passant():
     assert move["fen_after"].split()[1:] == ["b", "KQkq", "-", "0", "3"]
 
 
+def test_fen_parser_rejects_every_incomplete_prefix_without_crashing():
+    toolkit = ChessToolkit()
+    complete = "8/8/8/8/8/8/4K3/7k w - - 0 1"
+    parts = complete.split()
+
+    for field_count in range(1, 6):
+        incomplete = " ".join(parts[:field_count])
+        parsed = toolkit.parse_fen(incomplete)
+        assert parsed["valid"] is False
+        assert parsed["provided_field_count"] == field_count
+        assert "exactly 6 fields" in parsed["errors"][0]
+
+    malformed = toolkit.parse_fen("8/8/8 broken")
+    assert malformed["valid"] is False
+    assert malformed["provided_field_count"] == 2
+
+
 def test_pgn_san_uci_reconstruction_conversion_and_undo_are_consistent():
     toolkit = ChessToolkit()
     pgn = """[Event \"Synthetic\"]\n[Result \"*\"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 *"""

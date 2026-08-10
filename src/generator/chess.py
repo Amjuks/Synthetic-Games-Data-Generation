@@ -98,6 +98,27 @@ class ChessToolkit:
         self.timeout = float(chess_config.get("tool_timeout", 10))
 
     def parse_fen(self, fen: str) -> dict[str, Any]:
+        if not isinstance(fen, str):
+            return {"valid": False, "format": "fen", "errors": ["FEN must be a string."], "fen": fen}
+        parts = fen.split()
+        if len(parts) != 6:
+            return {
+                "valid": False,
+                "format": "fen",
+                "errors": [f"A complete FEN must contain exactly 6 fields; received {len(parts)}."],
+                "fen": fen,
+                "provided_field_count": len(parts),
+                "missing_fields": [
+                    name for name in (
+                        "piece_placement",
+                        "side_to_move",
+                        "castling_rights",
+                        "en_passant_target",
+                        "halfmove_clock",
+                        "fullmove_number",
+                    )[len(parts):]
+                ],
+            }
         try:
             board = chess.Board(fen)
         except (ValueError, IndexError) as exc:
@@ -109,10 +130,10 @@ class ChessToolkit:
             "errors": _status_names(status),
             "fen": board.fen(en_passant="fen"),
             "fields": {
-                "piece_placement": fen.split()[0],
+                "piece_placement": parts[0],
                 "side_to_move": "white" if board.turn else "black",
-                "castling_rights": fen.split()[2],
-                "en_passant_target": fen.split()[3],
+                "castling_rights": parts[2],
+                "en_passant_target": parts[3],
                 "halfmove_clock": board.halfmove_clock,
                 "fullmove_number": board.fullmove_number,
             },
