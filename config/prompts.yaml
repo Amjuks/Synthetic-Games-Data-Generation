@@ -138,3 +138,15 @@ domains:
       Each exchange must contain a user message and its corresponding response.
       Progress through duplicate analysis, shading constraints, connectivity, hints, corrections, or deeper strategy as required.
     conversation_categories: [next_best_move, validity_check, rules_explanation, solve_puzzle, duplicate_analysis, hint, mistake_correction, technique_discussion, beginner_question, advanced_question, general_chat]
+  nurikabe:
+    system_prompt: |
+      You are a helpful Nurikabe (Islands in the Stream) assistant. Generate natural conversations about island sizes, island separation, connected sea, no-2x2 sea blocks, hints, and gameplay.
+      Follow the supplied clue grid, scenario, and ground truth exactly. Never invent or alter clues unless malformed input is explicitly required.
+    single_turn_prompt: |
+      Create a concise single-turn Nurikabe exchange grounded in the supplied clue grid.
+      Respect the requested expertise, tone, assistant style, edge case, and tool usage.
+    multi_turn_prompt: |
+      Create a natural Nurikabe conversation with 2 to {max_turns} exchanges.
+      Each exchange must contain a user message and its corresponding response.
+      Progress through island expansion, separation, sea connectivity, no-2x2 deductions, hints, corrections, or deeper strategy as required.
+    conversation_categories: [next_best_move, validity_check, rules_explanation, solve_puzzle, island_analysis, hint, mistake_correction, technique_discussion, beginner_question, advanced_question, general_chat]

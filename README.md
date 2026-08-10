@@ -9,7 +9,7 @@ Primary use case:
 Key features:
 - Generates `single_turn`, `multi_turn`, or both conversation types in one run.
 - Supports `sudoku`, solver-backed `kenken`, solver-backed `kakuro`, solver-backed `starbattle`, and solver-backed `nonogram` through a domain adapter layer.
-- Supports solver-backed `hitori` through the same domain adapter layer.
+- Supports solver-backed `hitori` and `nurikabe` through the same domain adapter layer.
 - Uses structured scenarios instead of relying only on LLM creativity.
 - Selects puzzles from a persistent puzzle bank and creates transformed or edge-case variants.
 - Generates deterministic, domain-specific ground-truth metadata for each puzzle.
@@ -121,6 +121,7 @@ python -m src.generator.cli run --domain kakuro --samples 5
 python -m src.generator.cli run --domain starbattle --samples 5
 python -m src.generator.cli run --domain nonogram --samples 5
 python -m src.generator.cli run --domain hitori --samples 5
+python -m src.generator.cli run --domain nurikabe --samples 5
 python -m src.generator.cli status --job-name my_job
 ```
 
@@ -133,6 +134,7 @@ puzzle-generator run --domain kakuro --samples 5
 puzzle-generator run --domain starbattle --samples 5
 puzzle-generator run --domain nonogram --samples 5
 puzzle-generator run --domain hitori --samples 5
+puzzle-generator run --domain nurikabe --samples 5
 ```
 
 ### Commands
@@ -148,7 +150,7 @@ puzzle-generator run --domain hitori --samples 5
 | Name | Description | Type | Default | Allowed values | Required |
 |---|---|---:|---|---|---|
 | `--samples` | Total sample indexes to process. On resume, the new value replaces the previous target but cannot be lower than the number already completed. | int | `config.defaults.samples` -> `10` | positive integers | Optional |
-| `--domain` | Generation domain. | string | `config.defaults.domain` -> `sudoku` | `sudoku`, `kenken`, `kakuro`, `starbattle`, `nonogram`, `hitori` | Optional |
+| `--domain` | Generation domain. | string | `config.defaults.domain` -> `sudoku` | `sudoku`, `kenken`, `kakuro`, `starbattle`, `nonogram`, `hitori`, `nurikabe` | Optional |
 | `--conversation-type` | Which conversation types to generate. | string | `config.defaults.conversation_type` -> `both` | `single_turn`, `multi_turn`, `both` | Optional |
 | `--max-turns` | Upper bound for generated multi-turn scenario length. | int | `config.defaults.max_turns` -> `6` | positive integers | Optional |
 | `--job-name` | Output job directory name. If omitted, a timestamp-based name is generated. | string | auto-generated | any filesystem-safe string | Optional |
@@ -439,6 +441,7 @@ Current supported domain:
 - `starbattle`
 - `nonogram`
 - `hitori`
+- `nurikabe`
 
 Each adapter owns domain-specific scenario generation, puzzle selection, tool decisions, validation, prompt context, prompts, and CSV row extensions. Unsupported domains fail with a clear error before generation starts.
 

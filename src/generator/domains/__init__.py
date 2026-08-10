@@ -7,6 +7,7 @@ from .kakuro import KakuroDomainAdapter
 from .kenken import KenKenDomainAdapter
 from .hitori import HitoriDomainAdapter
 from .nonogram import NonogramDomainAdapter
+from .nurikabe import NurikabeDomainAdapter
 from .starbattle import StarBattleDomainAdapter
 from .sudoku import SudokuDomainAdapter
 
@@ -18,6 +19,7 @@ SUPPORTED_DOMAINS = {
     "starbattle": StarBattleDomainAdapter,
     "nonogram": NonogramDomainAdapter,
     "hitori": HitoriDomainAdapter,
+    "nurikabe": NurikabeDomainAdapter,
 }
 
 

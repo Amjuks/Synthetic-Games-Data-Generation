@@ -355,7 +355,7 @@ Before a model call, the generator enforces `generation.max_prompt_characters` (
 1. Create a new adapter under `src/generator/domains/`.
 2. Implement scenario generation, problem selection, tool decision/execution, validation, prompt context, and CSV row formatting.
 3. Register it in `SUPPORTED_DOMAINS` in `src/generator/domains/__init__.py`.
-4. Add tests for supported and unsupported domain behavior.
+4. Add solver, adapter, configuration, prompt, and end-to-end tests for the new domain.
 5. Document the new domain in `README.md`.
 
 ### Add New Sudoku Tools
@@ -374,7 +374,7 @@ The expected tool usage record shape is:
 ```
 
 ### Add Stronger Ground Truth
-Sudoku ground truth lives in `src/generator/puzzles.py`; solver-backed KenKen, Kakuro, Star Battle, Nonogram, and Hitori ground truth live in their respective domain engine modules.
+Sudoku ground truth lives in `src/generator/puzzles.py`; solver-backed KenKen, Kakuro, Star Battle, Nonogram, Hitori, and Nurikabe ground truth live in their respective domain engine modules.
 
 ### Add Stronger Validation
 The validator lives in `src/generator/validation.py` and is invoked through the domain adapter. Solver-backed checks can be added there without changing storage or model code.
