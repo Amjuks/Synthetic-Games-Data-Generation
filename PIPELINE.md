@@ -180,6 +180,8 @@ Current Chess tools:
 
 Chess keeps multiple ordered calls under `tool_usage_details.calls` while retaining the existing primary `tool_name`, `tool_input`, `tool_output`, and `reason` fields. Chess-specific code remains in `src/generator/chess.py` and `src/generator/domains/chess.py`. Game-history and FEN descendants share a lineage ID and dataset split; multi-turn verification includes an exact legal `fen_before`/`fen_after` trace for each played move.
 
+Stockfish verification is provisioned by `src/generator/chess_backends.py`: it uses configured/PATH binaries when present, otherwise selects the official stable platform asset, validates its release SHA-256, performs safe extraction and a UCI healthcheck, and caches it under the ignored output directory. Local Syzygy files take priority over the retrying online tablebase. With the default `verification_backends_required: true`, a missing or failed backend stops an objective engine/tablebase sample before the LLM request instead of emitting partially verified data. `python -m src.generator.chess_setup` performs an end-to-end backend healthcheck.
+
 Tool output is included in:
 - prompt context sent to the model
 - accepted sample metadata
@@ -238,7 +240,7 @@ Current checks:
 - standard scenarios have valid ground-truth status
 
 Known limitation:
-- The validator does not yet perform full solver-backed reasoning verification.
+- Free-form prose is not a formal proof. Domain solvers and Chess verification backends establish the objective evidence supplied before generation; validators still check schema, state, metadata, and required verification status rather than attempting unrestricted natural-language theorem proving.
 
 ### 7. Similarity And Diversity Checker
 Implementation:

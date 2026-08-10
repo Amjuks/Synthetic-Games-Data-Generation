@@ -5,6 +5,7 @@ import io
 import json
 import os
 import random
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -16,6 +17,7 @@ import chess.syzygy
 import requests
 
 from .models import PuzzleRecord, Scenario
+from .chess_backends import ChessBackendManager
 
 
 STARTING_FEN = chess.STARTING_FEN
@@ -86,11 +88,13 @@ class ChessToolkit:
     def __init__(self, config: dict[str, Any] | None = None):
         self.config = config or {}
         chess_config = self.config.get("chess", self.config)
-        self.engine_path = chess_config.get("engine_path") or os.getenv("CHESS_ENGINE_PATH")
+        self.engine_path = os.getenv("CHESS_ENGINE_PATH") or chess_config.get("engine_path")
         self.engine_depth = int(chess_config.get("engine_depth", 12))
-        self.tablebase_path = chess_config.get("tablebase_path") or os.getenv("CHESS_TABLEBASE_PATH")
+        self.backend_manager = ChessBackendManager(self.config)
+        self.tablebase_path = os.getenv("CHESS_TABLEBASE_PATH") or chess_config.get("tablebase_path")
         self.tablebase_url = chess_config.get("tablebase_url", "https://tablebase.lichess.ovh/standard")
         self.tablebase_online = bool(chess_config.get("tablebase_online", False))
+        self.tablebase_retries = int(chess_config.get("tablebase_retries", 3))
         self.timeout = float(chess_config.get("tool_timeout", 10))
 
     def parse_fen(self, fen: str) -> dict[str, Any]:
@@ -407,11 +411,13 @@ class ChessToolkit:
         parsed = self.parse_fen(fen)
         if not parsed["valid"]:
             return {"available": False, "verified": False, "errors": parsed["errors"]}
-        if not self.engine_path or not Path(self.engine_path).is_file():
-            return {"available": False, "verified": False, "reason": "No UCI engine executable is configured."}
+        backend = self.backend_manager.ensure_engine()
+        if not backend.get("available"):
+            return backend
+        engine_path = backend["engine_path"]
         board = chess.Board(fen)
         try:
-            with chess.engine.SimpleEngine.popen_uci(self.engine_path, timeout=self.timeout) as engine:
+            with chess.engine.SimpleEngine.popen_uci(engine_path, timeout=self.timeout) as engine:
                 infos = engine.analyse(board, chess.engine.Limit(depth=depth or self.engine_depth), multipv=max(1, multipv))
         except (OSError, chess.engine.EngineError, chess.engine.EngineTerminatedError, TimeoutError) as exc:
             return {"available": False, "verified": False, "reason": str(exc)}
@@ -434,7 +440,7 @@ class ChessToolkit:
                 "pv_san": san_line,
                 "pv_uci": [move.uci() for move in pv],
             })
-        return {"available": True, "verified": True, "engine_path": str(self.engine_path), "lines": lines, "evaluation_is_estimate": True}
+        return {**backend, "available": True, "verified": True, "engine_path": str(engine_path), "lines": lines, "evaluation_is_estimate": True}
 
     def tablebase_lookup(self, fen: str) -> dict[str, Any]:
         parsed = self.parse_fen(fen)
@@ -444,21 +450,42 @@ class ChessToolkit:
         pieces = chess.popcount(board.occupied)
         if pieces > 7:
             return {"available": False, "verified": False, "applicable": False, "piece_count": pieces, "reason": "Syzygy tablebases support at most seven pieces."}
-        if self.tablebase_path and Path(self.tablebase_path).is_dir():
+        if self.tablebase_path and str(self.tablebase_path).lower() != "auto" and Path(self.tablebase_path).is_dir():
             try:
                 with chess.syzygy.open_tablebase(self.tablebase_path) as tablebase:
                     return {"available": True, "verified": True, "applicable": True, "piece_count": pieces, "source": "local_syzygy", "wdl": tablebase.probe_wdl(board), "dtz": tablebase.probe_dtz(board)}
             except (OSError, KeyError) as exc:
                 return {"available": False, "verified": False, "applicable": True, "piece_count": pieces, "reason": str(exc)}
         if self.tablebase_online:
-            try:
-                response = requests.get(self.tablebase_url, params={"fen": board.fen(en_passant="fen")}, timeout=self.timeout)
-                response.raise_for_status()
-                payload = response.json()
-                return {"available": True, "verified": True, "applicable": True, "piece_count": pieces, "source": "lichess_syzygy", "category": payload.get("category"), "dtz": payload.get("dtz"), "dtm": payload.get("dtm"), "checkmate": payload.get("checkmate"), "stalemate": payload.get("stalemate"), "moves": payload.get("moves", [])[:10]}
-            except (requests.RequestException, ValueError) as exc:
-                return {"available": False, "verified": False, "applicable": True, "piece_count": pieces, "reason": str(exc)}
+            last_error = "unknown tablebase error"
+            for attempt in range(max(1, self.tablebase_retries)):
+                try:
+                    response = requests.get(
+                        self.tablebase_url,
+                        params={"fen": board.fen(en_passant="fen")},
+                        headers={"User-Agent": "synthetic-chess-dataset/0.1"},
+                        timeout=self.timeout,
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    if not payload.get("category"):
+                        raise ValueError("Tablebase response did not include a result category.")
+                    return {"available": True, "verified": True, "applicable": True, "piece_count": pieces, "source": "lichess_syzygy", "category": payload.get("category"), "dtz": payload.get("dtz"), "dtm": payload.get("dtm"), "checkmate": payload.get("checkmate"), "stalemate": payload.get("stalemate"), "moves": payload.get("moves", [])[:10]}
+                except (requests.RequestException, ValueError) as exc:
+                    last_error = str(exc)
+                    if attempt + 1 < max(1, self.tablebase_retries):
+                        time.sleep(0.25 * (2 ** attempt))
+            return {"available": False, "verified": False, "applicable": True, "piece_count": pieces, "reason": last_error}
         return {"available": False, "verified": False, "applicable": True, "piece_count": pieces, "reason": "No local tablebase is configured and online lookup is disabled."}
+
+    def verify_backends(self) -> dict[str, Any]:
+        engine = self.backend_manager.healthcheck()
+        tablebase = self.tablebase_lookup("7k/8/6K1/8/8/8/6Q1/8 w - - 0 1")
+        return {
+            "verified": bool(engine.get("verified") and tablebase.get("verified")),
+            "engine": engine,
+            "tablebase": tablebase,
+        }
 
 
 @dataclass(frozen=True)

@@ -175,6 +175,7 @@ class ChessDomainAdapter:
         self.puzzle_manager = ChessProblemManager(config)
         self.toolkit: ChessToolkit = self.puzzle_manager.toolkit
         self.validator = ChessValidator()
+        self.require_verification_backends = bool(config.get("chess", {}).get("verification_backends_required", True))
 
     def generate_scenario(self, **kwargs: Any) -> Scenario:
         return self.scenario_generator.generate(**kwargs)
@@ -206,6 +207,17 @@ class ChessDomainAdapter:
             verification_status = "partial_unavailable"
         puzzle.metadata.update({"tools_required": required, "tools_used": used, "verification_status": verification_status})
         scenario.metadata.update({"tools_required": required, "tools_used": used, "verification_status": verification_status})
+        unavailable_backends = [
+            call for call in calls
+            if call["tool_name"] in {"chess_engine_analysis", "chess_tablebase_lookup"}
+            and not call.get("output", {}).get("verified")
+        ]
+        if self.require_verification_backends and unavailable_backends:
+            details = "; ".join(
+                f"{call['tool_name']}: {call.get('output', {}).get('reason', 'verification failed')}"
+                for call in unavailable_backends
+            )
+            raise RuntimeError(f"Required Chess verification backend failed before model generation: {details}")
         if not calls:
             return {"used": False, "tool_name": None, "tool_input": None, "tool_output": None, "reason": None, "calls": [], "verification_status": verification_status}
         primary = calls[0]

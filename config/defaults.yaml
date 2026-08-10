@@ -96,12 +96,17 @@ defaults:
         persistent_bank_filename: chess_position_bank.jsonl
         usage_stats_filename: chess_position_usage.json
       chess:
-        engine_path: null
+        engine_path: auto
+        engine_auto_install: true
+        engine_cache_dir: null
+        engine_release_api: https://api.github.com/repos/official-stockfish/Stockfish/releases/latest
         engine_depth: 12
-        tablebase_path: null
-        tablebase_online: false
+        tablebase_path: auto
+        tablebase_online: true
         tablebase_url: https://tablebase.lichess.ovh/standard
-        tool_timeout: 10
+        tablebase_retries: 3
+        verification_backends_required: true
+        tool_timeout: 60
       scenario:
         task_categories:
           - rules_explanation

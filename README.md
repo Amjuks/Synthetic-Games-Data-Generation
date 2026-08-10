@@ -464,7 +464,15 @@ Chess may require several checks for one request. It preserves the existing prim
 
 Chess uses deterministic legal playouts to create unrelated position lineages, then emits both game-history and FEN representations. All descendants of one lineage receive the same stable train/validation/test split to prevent cross-split near-duplicate leakage. Complete FEN strings retain side to move, castling rights, en passant target, halfmove clock, and fullmove number. The Chess toolkit parses FEN/PGN/SAN/UCI, reconstructs histories, lists and applies legal moves, converts and undoes moves, detects terminal/draw states (including history-dependent repetition), inspects attacks/defenders/pins/checks/captures/material, records exact multi-turn FEN traces, and supports engine and tablebase verification.
 
-Engine and tablebase claims are availability-aware. Set `CHESS_ENGINE_PATH` to a UCI engine executable and optionally `CHESS_TABLEBASE_PATH` to a local Syzygy directory. Online Lichess tablebase lookup is disabled by default and can be enabled with `domains.chess.chess.tablebase_online`. If required evidence is unavailable, the tool records `partial_unavailable`; prompts prohibit inventing a best move, forced tactic, or tablebase result.
+Chess verification is operational by default: `engine_path: auto` and `tablebase_path: auto`. On the first engine-backed request, the pipeline discovers a configured/PATH engine or downloads the platform-appropriate stable Stockfish asset from the official GitHub release, verifies the release-provided SHA-256, extracts it safely into `outputs/.chess_backends/stockfish`, completes a UCI identity/legal-move healthcheck, and reuses the cache. Set `CHESS_ENGINE_PATH` only to override this with another local Stockfish executable. For ≤7-piece positions, a local `CHESS_TABLEBASE_PATH` takes priority; otherwise `auto` uses the retrying Lichess Syzygy endpoint enabled by default. `verification_backends_required: true` makes engine/tablebase categories fail before the model call if their required evidence cannot be verified—unverified best-move, tactical, evaluation, and tablebase samples are not generated.
+
+Provision and verify both backends independently before a large generation run:
+
+```powershell
+python -m src.generator.chess_setup
+```
+
+The command exits nonzero unless Stockfish returns a legal UCI probe move and the tablebase returns a verified result for a known three-piece position. Network access is required for first-time Stockfish provisioning and for online tablebase queries; fully offline use requires `CHESS_ENGINE_PATH` and `CHESS_TABLEBASE_PATH`.
 
 Run Chess generation with:
 

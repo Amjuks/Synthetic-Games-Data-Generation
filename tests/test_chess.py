@@ -2,6 +2,7 @@ import csv
 import json
 
 import chess
+import pytest
 
 from src.generator.chess import ChessProblemManager, ChessToolkit, split_for_lineage
 from src.generator.config import resolve_domain_config
@@ -32,7 +33,7 @@ def chess_config(tmp_path):
             "tool_usage_modes": ["tactical_inspection"],
         },
         "prompts": {"system_prompt": "chess system", "single_turn_prompt": "single", "multi_turn_prompt": "multi {max_turns}"},
-        "chess": {"engine_path": None, "tablebase_online": False},
+        "chess": {"engine_path": None, "engine_auto_install": False, "tablebase_online": False, "verification_backends_required": False},
     }
 
 
@@ -178,6 +179,17 @@ def test_special_move_endgame_and_repetition_scenarios_select_applicable_positio
     repetition_usage = adapter.maybe_use_tool(repetition_scenario, repetition)
     status = next(call for call in repetition_usage["calls"] if call["tool_name"] == "chess_position_status")
     assert status["output"]["can_claim_threefold_repetition"] is True
+
+
+def test_required_engine_verification_fails_closed_before_generation(tmp_path):
+    config = chess_config(tmp_path)
+    config["chess"]["verification_backends_required"] = True
+    adapter = ChessDomainAdapter(config)
+    selected_scenario = scenario(category="best_move")
+    selected = adapter.select_problem(selected_scenario, 1)
+
+    with pytest.raises(RuntimeError, match="Required Chess verification backend failed before model generation"):
+        adapter.maybe_use_tool(selected_scenario, selected)
 
 
 class ChessPromptModel:
