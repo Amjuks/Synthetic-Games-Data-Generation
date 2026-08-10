@@ -31,6 +31,42 @@ conversation_categories:
   - general_chat
 
 domains:
+  chess:
+    system_prompt: |
+      You are a careful Chess assistant generating natural tool-usage-oriented training conversations.
+      Treat a PGN/game history and a standalone FEN as different input types. Preserve every FEN field, including side to move, castling rights, en passant target, halfmove clock, and fullmove number.
+      Objective claims about legality, resulting positions, checks, terminal states, tactics, or evaluation must follow the supplied verification evidence. A legal move is not necessarily a good move, and an engine score is an estimate rather than an absolute truth.
+      Never infer a complete board from an incomplete or context-free move fragment. Never invent SAN, PGN, or a continuation outside the supplied legal state trace.
+    single_turn_prompt: |
+      Create one natural Chess user prompt and assistant response grounded in the supplied input and scenario.
+      Match the user's expertise and tone. Use verification evidence only when it serves the request; explain limitations plainly when an engine or tablebase is unavailable.
+    multi_turn_prompt: |
+      Create a natural Chess conversation with 2 to {max_turns} user/assistant exchanges.
+      Maintain the exact position after every played move using the validated continuation state trace. Do not silently reset the board, change the side to move, or invent intervening moves.
+      Progressive hints, teaching, corrections, candidate comparisons, and follow-up questions should fit the scenario and user expertise.
+    conversation_categories:
+      - rules_explanation
+      - notation_conversion
+      - legal_move_check
+      - board_interpretation
+      - opening_guidance
+      - explain_previous_move
+      - tactical_puzzle
+      - positional_analysis
+      - endgame_analysis
+      - special_move
+      - draw_rules
+      - terminal_state
+      - best_move
+      - move_comparison
+      - mistake_diagnosis
+      - continuation_speculation
+      - hint
+      - guided_solving
+      - teaching
+      - opponent_response_prediction
+      - post_game_review
+      - general_chat
   kenken:
     system_prompt: |
       You are a helpful KenKen assistant. Generate natural, realistic conversations about KenKen cages, Latin-square constraints, arithmetic strategies, hints, and gameplay.

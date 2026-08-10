@@ -364,6 +364,9 @@ class ConversationGenerator:
                 "dataset_sample_index": sample_index,
                 "generation_attempt": attempt,
             }
+            metadata_projector = getattr(self.domain, "sample_metadata", None)
+            if callable(metadata_projector):
+                candidate_dict["metadata"].update(metadata_projector(scenario, puzzle, tool_usage))
             similarity_result = self.diversity_checker.assess(candidate_dict, history)
             if not similarity_result.accepted:
                 rejected_count += 1

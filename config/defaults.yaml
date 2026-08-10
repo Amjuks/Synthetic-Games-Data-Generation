@@ -91,6 +91,48 @@ defaults:
       - row_column_box_check
       - solution_verification
   domains:
+    chess:
+      puzzles:
+        persistent_bank_filename: chess_position_bank.jsonl
+        usage_stats_filename: chess_position_usage.json
+      chess:
+        engine_path: null
+        engine_depth: 12
+        tablebase_path: null
+        tablebase_online: false
+        tablebase_url: https://tablebase.lichess.ovh/standard
+        tool_timeout: 10
+      scenario:
+        task_categories:
+          - rules_explanation
+          - notation_conversion
+          - legal_move_check
+          - board_interpretation
+          - opening_guidance
+          - explain_previous_move
+          - tactical_puzzle
+          - positional_analysis
+          - endgame_analysis
+          - special_move
+          - draw_rules
+          - terminal_state
+          - best_move
+          - move_comparison
+          - mistake_diagnosis
+          - continuation_speculation
+          - hint
+          - guided_solving
+          - teaching
+          - opponent_response_prediction
+          - post_game_review
+          - general_chat
+        difficulty_levels: [easy, medium, hard, expert]
+        user_expertise_levels: [beginner, intermediate, advanced, expert]
+        user_personalities: [careful, impatient, curious, skeptical, analytical]
+        assistant_styles: [concise, coaching, explanatory, Socratic, supportive]
+        tones: [neutral, friendly, urgent, frustrated, academic]
+        edge_cases: [none, malformed_input, illegal_move, ambiguous_input, contradictory_input, invalid_position, incomplete_input]
+        tool_usage_modes: [none, parse_validate, reconstruct, legal_moves, move_application, position_status, tactical_inspection, engine_analysis, tablebase_lookup]
     sudoku: {}
     kenken:
       puzzles:

@@ -165,6 +165,21 @@ Current Hitori tools:
 - `hitori_constraint_validation`
 - `hitori_solution_verification`
 
+Current Chess tools:
+- `chess_parse_validate`
+- `chess_reconstruct_position`
+- `chess_legal_moves`
+- `chess_move_conversion`
+- `chess_move_application`
+- `chess_move_undo`
+- `chess_tactical_inspection`
+- `chess_position_status`
+- `chess_engine_analysis`
+- `chess_tablebase_lookup`
+- `chess_state_trace`
+
+Chess keeps multiple ordered calls under `tool_usage_details.calls` while retaining the existing primary `tool_name`, `tool_input`, `tool_output`, and `reason` fields. Chess-specific code remains in `src/generator/chess.py` and `src/generator/domains/chess.py`. Game-history and FEN descendants share a lineage ID and dataset split; multi-turn verification includes an exact legal `fen_before`/`fen_after` trace for each played move.
+
 Tool output is included in:
 - prompt context sent to the model
 - accepted sample metadata
@@ -374,7 +389,7 @@ The expected tool usage record shape is:
 ```
 
 ### Add Stronger Ground Truth
-Sudoku ground truth lives in `src/generator/puzzles.py`; solver-backed KenKen, Kakuro, Star Battle, Nonogram, Hitori, and Nurikabe ground truth live in their respective domain engine modules.
+Sudoku ground truth lives in `src/generator/puzzles.py`; Chess and solver-backed KenKen, Kakuro, Star Battle, Nonogram, Hitori, and Nurikabe ground truth live in their respective domain engine modules.
 
 ### Add Stronger Validation
 The validator lives in `src/generator/validation.py` and is invoked through the domain adapter. Solver-backed checks can be added there without changing storage or model code.

@@ -1,7 +1,7 @@
 [project]
 name = "synthetic-sudoku-dataset"
 version = "0.1.0"
-description = "Synthetic puzzle conversation data generation system with Sudoku, KenKen, Kakuro, and Star Battle domains"
+description = "Synthetic tool-usage conversation data generation system for Chess and logic-puzzle domains"
 requires-python = ">=3.10"
 dependencies = [
   "PyYAML>=6.0",
@@ -9,6 +9,7 @@ dependencies = [
   "openai>=1.0.0",
   "requests>=2.31.0",
   "pydantic>=2.0.0",
+  "python-chess>=1.999",
 ]
 
 [project.scripts]

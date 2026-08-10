@@ -1,0 +1,205 @@
+import csv
+import json
+
+import chess
+
+from src.generator.chess import ChessProblemManager, ChessToolkit, split_for_lineage
+from src.generator.config import resolve_domain_config
+from src.generator.domains.chess import ChessDomainAdapter
+from src.generator.generator import ConversationGenerator
+from src.generator.models import Scenario
+
+
+def chess_config(tmp_path):
+    return {
+        "domain": "chess",
+        "output_path": str(tmp_path),
+        "output_dir": str(tmp_path),
+        "max_turns": 4,
+        "generation": {"random_seed": 29, "max_regeneration_attempts": 2, "max_prompt_characters": 100_000},
+        "model": {"model_name": "test-model"},
+        "storage": {"metadata_filename": "samples.jsonl", "rejected_filename": "rejected.jsonl", "stats_filename": "stats.json"},
+        "puzzles": {"persistent_bank_filename": "chess_bank.jsonl", "usage_stats_filename": "chess_usage.json"},
+        "similarity": {"ngram_overlap_threshold": 1.1, "embedding_similarity_threshold": 1.1, "structural_similarity_threshold": 1.1, "scenario_similarity_threshold": 1.1, "puzzle_similarity_threshold": 1.1},
+        "scenario": {
+            "task_categories": ["board_interpretation"],
+            "difficulty_levels": ["easy"],
+            "user_expertise_levels": ["intermediate"],
+            "user_personalities": ["analytical"],
+            "assistant_styles": ["explanatory"],
+            "tones": ["neutral"],
+            "edge_cases": ["none"],
+            "tool_usage_modes": ["tactical_inspection"],
+        },
+        "prompts": {"system_prompt": "chess system", "single_turn_prompt": "single", "multi_turn_prompt": "multi {max_turns}"},
+        "chess": {"engine_path": None, "tablebase_online": False},
+    }
+
+
+def scenario(category="legal_move_check", edge="none", conversation_type="single_turn"):
+    return Scenario(
+        "chess-test", category, conversation_type, 1 if conversation_type == "single_turn" else 3,
+        "intermediate", "analytical", "coaching", "neutral", "easy", category, edge, "legal_moves",
+    )
+
+
+def test_fen_parser_preserves_all_state_fields_and_en_passant():
+    toolkit = ChessToolkit()
+    fen = "rnbqkbnr/1pp1pppp/p7/3pP3/8/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 3"
+
+    parsed = toolkit.parse_fen(fen)
+    move = toolkit.apply_move(fen, "exd6", "san")
+
+    assert parsed["valid"] is True
+    assert parsed["fen"] == fen
+    assert parsed["fields"] == {
+        "piece_placement": fen.split()[0],
+        "side_to_move": "white",
+        "castling_rights": "KQkq",
+        "en_passant_target": "d6",
+        "halfmove_clock": 0,
+        "fullmove_number": 3,
+    }
+    assert move["is_en_passant"] is True
+    assert move["uci"] == "e5d6"
+    assert move["fen_after"].split()[1:] == ["b", "KQkq", "-", "0", "3"]
+
+
+def test_pgn_san_uci_reconstruction_conversion_and_undo_are_consistent():
+    toolkit = ChessToolkit()
+    pgn = """[Event \"Synthetic\"]\n[Result \"*\"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 *"""
+
+    parsed = toolkit.parse_pgn(pgn)
+    rebuilt = toolkit.reconstruct(pgn=pgn)
+    converted = toolkit.convert_move(rebuilt["state_trace"][2]["fen"], "g1f3", "uci")
+    undone = toolkit.undo_moves(chess.STARTING_FEN, ["e4", "e5", "Nf3"], count=1)
+
+    assert parsed["valid"] is True
+    assert [move["san"] for move in parsed["moves"]] == ["e4", "e5", "Nf3", "Nc6", "Bb5"]
+    assert rebuilt["final_fen"] == parsed["final_fen"]
+    assert converted == {"valid": True, "san": "Nf3", "uci": "g1f3", "is_capture": False, "is_castling": False, "is_en_passant": False, "promotion": None}
+    assert undone["fen"] == rebuilt["state_trace"][2]["fen"]
+    assert toolkit.parse_move(chess.STARTING_FEN, "e2e5", "uci")["valid"] is False
+
+
+def test_terminal_draw_repetition_and_insufficient_material_detection():
+    toolkit = ChessToolkit()
+    mate = toolkit.position_status("7k/6Q1/6K1/8/8/8/8/8 b - - 0 1")
+    stale = toolkit.position_status("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1")
+    insufficient = toolkit.position_status("8/8/8/8/8/8/4K3/7k w - - 0 1")
+    repetition = toolkit.history_status(moves=["Nf3", "Nf6", "Ng1", "Ng8", "Nf3", "Nf6", "Ng1", "Ng8"])
+
+    assert mate["checkmate"] and mate["outcome"]["termination"] == "checkmate"
+    assert stale["stalemate"] and stale["outcome"]["result"] == "1/2-1/2"
+    assert insufficient["insufficient_material"]
+    assert repetition["can_claim_threefold_repetition"]
+
+
+def test_inspection_reports_attacks_defenders_pins_checks_captures_and_material():
+    toolkit = ChessToolkit()
+    result = toolkit.inspect("4k3/4r3/8/8/8/8/4R3/4K3 w - - 0 1", squares=["e2", "e1"])
+
+    assert result["valid"] is True
+    assert result["squares"]["e2"]["white_piece_pinned"] is True
+    assert "e7" in result["squares"]["e2"]["attacked_by_black"]
+    assert "e1" in result["squares"]["e2"]["defenders"]
+    assert isinstance(result["checks"], list) and isinstance(result["captures"], list)
+    assert result["material"]["balance_white_minus_black"] == 0
+    assert "fork_candidates" in result["tactical_features"]
+
+
+def test_programmatic_bank_is_legal_deterministic_and_split_by_lineage(tmp_path):
+    first = ChessProblemManager(chess_config(tmp_path / "one"))
+    second = ChessProblemManager(chess_config(tmp_path / "two"))
+
+    assert [(row.canonical_signature, row.solution) for row in first.base_bank] == [(row.canonical_signature, row.solution) for row in second.base_bank]
+    assert len(first.base_bank) >= 64
+    for record in first.base_bank:
+        assert ChessToolkit().parse_fen(record.solution)["valid"] is True
+        assert record.metadata["dataset_split"] == split_for_lineage(record.metadata["lineage_id"])
+    for lineage in first.lineages:
+        descendants = [row for row in first.base_bank if row.metadata["lineage_id"] == lineage.lineage_id]
+        assert {row.metadata["dataset_split"] for row in descendants} == {split_for_lineage(lineage.lineage_id)}
+        assert {row.metadata["input_type"] for row in descendants} == {"fen", "game_history"}
+
+
+def test_incomplete_fragment_is_not_reconstructed_and_edge_is_verified(tmp_path):
+    adapter = ChessDomainAdapter(chess_config(tmp_path))
+    selected = adapter.select_problem(scenario(edge="ambiguous_input"), 0)
+    usage = adapter.maybe_use_tool(scenario(edge="ambiguous_input"), selected)
+
+    assert selected.ground_truth["current_fen"] is None
+    assert selected.ground_truth["validity_status"] == "incomplete"
+    assert usage["calls"][0]["output"]["valid"] is False
+    assert "no board was inferred" in usage["calls"][0]["output"]["errors"][0].lower()
+    assert usage["verification_status"] == "verified"
+
+
+def test_adapter_records_purposeful_tools_state_trace_and_unavailable_engine(tmp_path):
+    adapter = ChessDomainAdapter(chess_config(tmp_path))
+    selected_scenario = scenario(category="best_move", conversation_type="multi_turn")
+    selected = adapter.select_problem(selected_scenario, 1)
+    usage = adapter.maybe_use_tool(selected_scenario, selected)
+    names = [call["tool_name"] for call in usage["calls"]]
+
+    assert names == ["chess_parse_validate", "chess_engine_analysis", "chess_state_trace"]
+    assert usage["calls"][1]["output"]["available"] is False
+    assert usage["verification_status"] == "partial_unavailable"
+    trace = usage["calls"][2]["output"]["state_trace"]
+    board = chess.Board(selected.ground_truth["current_fen"])
+    for row in trace:
+        assert row["fen_before"] == board.fen(en_passant="fen")
+        move = board.parse_san(row["san"])
+        assert move.uci() == row["uci"]
+        board.push(move)
+        assert row["fen_after"] == board.fen(en_passant="fen")
+    assert selected.metadata["tools_required"] == names
+    assert selected.metadata["tools_used"] == names
+
+
+def test_special_move_endgame_and_repetition_scenarios_select_applicable_positions(tmp_path):
+    adapter = ChessDomainAdapter(chess_config(tmp_path))
+    castle_scenario = scenario(category="special_move")
+    castle_scenario.metadata["rules_theme"] = "castling"
+    castle = adapter.select_problem(castle_scenario, 1)
+    castle_usage = adapter.maybe_use_tool(castle_scenario, castle)
+    application = next(call for call in castle_usage["calls"] if call["tool_name"] == "chess_move_application")
+    assert application["output"]["is_castling"] is True
+
+    endgame = adapter.select_problem(scenario(category="endgame_analysis"), 3)
+    endgame_usage = adapter.maybe_use_tool(scenario(category="endgame_analysis"), endgame)
+    tablebase = next(call for call in endgame_usage["calls"] if call["tool_name"] == "chess_tablebase_lookup")
+    assert endgame.metadata["piece_count"] <= 7
+    assert tablebase["output"]["applicable"] is True
+
+    repetition_scenario = scenario(category="draw_rules")
+    repetition_scenario.metadata["rules_theme"] = "repetition"
+    repetition = adapter.select_problem(repetition_scenario, 0)
+    repetition_usage = adapter.maybe_use_tool(repetition_scenario, repetition)
+    status = next(call for call in repetition_usage["calls"] if call["tool_name"] == "chess_position_status")
+    assert status["output"]["can_claim_threefold_repetition"] is True
+
+
+class ChessPromptModel:
+    def generate(self, prompt):
+        assert "Domain: chess" in prompt
+        assert "castling_rights" in prompt
+        return json.dumps({"prompt": "What does this position say?", "response": "I will interpret only the supplied FEN and verified inspection."})
+
+
+def test_end_to_end_chess_generation_preserves_schema_and_explicit_metadata(tmp_path):
+    generator = ConversationGenerator(chess_config(tmp_path))
+    generator.model_client = ChessPromptModel()
+
+    result = generator.run(samples=1, conversation_type="single_turn", job_name="chess-job")
+    sample = json.loads((tmp_path / "chess-job" / "samples.jsonl").read_text(encoding="utf-8").strip())
+
+    assert result["domain"] == "chess"
+    assert sample["domain"] == "chess"
+    assert sample["tool_usage_details"]["calls"]
+    for key in ("input_type", "conversation_type", "category", "difficulty", "side_to_move", "notation_format", "tools_required", "tools_used", "verification_status", "lineage_id", "dataset_split"):
+        assert key in sample["metadata"]
+    with (tmp_path / "chess-job" / "single_turn.csv").open(newline="", encoding="utf-8") as handle:
+        row = next(csv.DictReader(handle))
+    assert row["domain"] == "chess"
+    assert row["dataset_split"] in {"train", "validation", "test"}

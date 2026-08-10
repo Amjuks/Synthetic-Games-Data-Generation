@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..config import resolve_domain_config
+from .chess import ChessDomainAdapter
 from .kakuro import KakuroDomainAdapter
 from .kenken import KenKenDomainAdapter
 from .hitori import HitoriDomainAdapter
@@ -13,6 +14,7 @@ from .sudoku import SudokuDomainAdapter
 
 
 SUPPORTED_DOMAINS = {
+    "chess": ChessDomainAdapter,
     "sudoku": SudokuDomainAdapter,
     "kenken": KenKenDomainAdapter,
     "kakuro": KakuroDomainAdapter,

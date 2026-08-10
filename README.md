@@ -1,7 +1,7 @@
 # Synthetic Puzzle Conversation Data Generator
 
 ## Project Overview
-This project generates synthetic Sudoku, KenKen, Kakuro, Star Battle, Nonogram (Picross/Griddlers), and Hitori chat datasets with persistent job state, structured scenario generation, puzzle selection, validation, and diversity checks.
+This project generates synthetic Chess, Sudoku, KenKen, Kakuro, Star Battle, Nonogram (Picross/Griddlers), Hitori, and Nurikabe chat datasets with persistent job state, structured scenario generation, puzzle selection, validation, and diversity checks.
 
 Primary use case:
 - Build large puzzle conversation datasets for training, evaluation, or experimentation.
@@ -10,6 +10,7 @@ Key features:
 - Generates `single_turn`, `multi_turn`, or both conversation types in one run.
 - Supports `sudoku`, solver-backed `kenken`, solver-backed `kakuro`, solver-backed `starbattle`, and solver-backed `nonogram` through a domain adapter layer.
 - Supports solver-backed `hitori` and `nurikabe` through the same domain adapter layer.
+- Supports stateful `chess` conversations from validated PGN/SAN game histories or complete FEN positions.
 - Uses structured scenarios instead of relying only on LLM creativity.
 - Selects puzzles from a persistent puzzle bank and creates transformed or edge-case variants.
 - Generates deterministic, domain-specific ground-truth metadata for each puzzle.
@@ -150,7 +151,7 @@ puzzle-generator run --domain nurikabe --samples 5
 | Name | Description | Type | Default | Allowed values | Required |
 |---|---|---:|---|---|---|
 | `--samples` | Total sample indexes to process. On resume, the new value replaces the previous target but cannot be lower than the number already completed. | int | `config.defaults.samples` -> `10` | positive integers | Optional |
-| `--domain` | Generation domain. | string | `config.defaults.domain` -> `sudoku` | `sudoku`, `kenken`, `kakuro`, `starbattle`, `nonogram`, `hitori`, `nurikabe` | Optional |
+| `--domain` | Generation domain. | string | `config.defaults.domain` -> `sudoku` | `chess`, `sudoku`, `kenken`, `kakuro`, `starbattle`, `nonogram`, `hitori`, `nurikabe` | Optional |
 | `--conversation-type` | Which conversation types to generate. | string | `config.defaults.conversation_type` -> `both` | `single_turn`, `multi_turn`, `both` | Optional |
 | `--max-turns` | Upper bound for generated multi-turn scenario length. | int | `config.defaults.max_turns` -> `6` | positive integers | Optional |
 | `--job-name` | Output job directory name. If omitted, a timestamp-based name is generated. | string | auto-generated | any filesystem-safe string | Optional |
@@ -435,6 +436,7 @@ Flattened fields include:
 The shared pipeline is orchestrated by `ConversationGenerator`, while domain behavior is selected through `src/generator/domains`.
 
 Current supported domain:
+- `chess`
 - `sudoku`
 - `kenken`
 - `kakuro`
@@ -457,6 +459,18 @@ Tool metadata includes:
 - `tool_usage_details.tool_input`
 - `tool_usage_details.tool_output`
 - `tool_usage_details.reason`
+
+Chess may require several checks for one request. It preserves the existing primary-tool fields and also records ordered, purposeful calls in `tool_usage_details.calls`. Each Chess sample explicitly records `input_type`, `conversation_type`, `category`, `difficulty`, `side_to_move`, `notation_format`, `tools_required`, `tools_used`, `verification_status`, `lineage_id`, and `dataset_split` in its metadata.
+
+Chess uses deterministic legal playouts to create unrelated position lineages, then emits both game-history and FEN representations. All descendants of one lineage receive the same stable train/validation/test split to prevent cross-split near-duplicate leakage. Complete FEN strings retain side to move, castling rights, en passant target, halfmove clock, and fullmove number. The Chess toolkit parses FEN/PGN/SAN/UCI, reconstructs histories, lists and applies legal moves, converts and undoes moves, detects terminal/draw states (including history-dependent repetition), inspects attacks/defenders/pins/checks/captures/material, records exact multi-turn FEN traces, and supports engine and tablebase verification.
+
+Engine and tablebase claims are availability-aware. Set `CHESS_ENGINE_PATH` to a UCI engine executable and optionally `CHESS_TABLEBASE_PATH` to a local Syzygy directory. Online Lichess tablebase lookup is disabled by default and can be enabled with `domains.chess.chess.tablebase_online`. If required evidence is unavailable, the tool records `partial_unavailable`; prompts prohibit inventing a best move, forced tactic, or tablebase result.
+
+Run Chess generation with:
+
+```powershell
+python -m src.generator.cli run --domain chess --samples 100 --conversation-type both --job-name chess_100
+```
 
 Sudoku tool usage is scenario-driven. Examples include candidate scanning, board validation, and solution verification.
 
