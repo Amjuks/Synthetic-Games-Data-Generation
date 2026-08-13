@@ -150,19 +150,27 @@ class HitoriPuzzleManager:
         parent = min(choices, key=lambda puzzle: (self.usage_stats.get(puzzle.puzzle_id, 0), puzzle.num_clues))
         size, grid = parse_puzzle(parent.puzzle)
         if scenario.edge_case == "malformed_input":
-            return self._make_variant(parent, "malformed", rendered_board="Hitori: 1 2 # invalid grid [")
+            malformed = ("Hitori: 1 2 # invalid grid [", "Hitori rows: [1, 2], [missing]", "Hitori size: ?; grid: 1|2|x")[sample_index % 3]
+            return self._make_variant(parent, f"malformed_{sample_index}", rendered_board=malformed)
         if scenario.edge_case == "invalid_grid":
-            altered = deepcopy(grid); altered[0][0] = 0
-            return self._make_variant(parent, "invalid_grid", grid=altered)
+            row, column = sample_index % size, (sample_index // size) % size
+            altered = deepcopy(grid); altered[row][column] = 0
+            return self._make_variant(parent, f"invalid_grid_{row}_{column}", grid=altered)
         if scenario.edge_case == "unsolvable_puzzle":
-            return self._make_variant(parent, "unsolvable", grid=[[1] * size for _ in range(size)])
+            value = 1 + sample_index % size
+            return self._make_variant(parent, f"unsolvable_{value}", grid=[[value] * size for _ in range(size)])
         if scenario.edge_case == "ambiguous_puzzle":
             return self._make_variant(parent, "ambiguous", grid=_ambiguous_grid(size))
-        operation = ("identity", "reflect_horizontal", "reflect_vertical", "rotate_90")[sample_index % 4]
+        operations = ("identity", "reflect_horizontal", "reflect_vertical", "rotate_90", "rotate_180", "rotate_270", "transpose", "anti_transpose")
+        operation = operations[sample_index % len(operations)]
         transformed = deepcopy(grid)
         if operation == "reflect_horizontal": transformed = list(reversed(transformed))
         elif operation == "reflect_vertical": transformed = [list(reversed(row)) for row in transformed]
         elif operation == "rotate_90": transformed = [list(row) for row in zip(*transformed[::-1])]
+        elif operation == "rotate_180": transformed = [list(reversed(row)) for row in reversed(transformed)]
+        elif operation == "rotate_270": transformed = [list(row) for row in zip(*transformed)][::-1]
+        elif operation == "transpose": transformed = [list(row) for row in zip(*transformed)]
+        elif operation == "anti_transpose": transformed = [list(row) for row in zip(*[list(reversed(row)) for row in reversed(transformed)])]
         return self._make_variant(parent, operation, grid=transformed)
 
     def mark_used(self, puzzle: PuzzleRecord) -> None:
@@ -176,11 +184,12 @@ class HitoriPuzzleManager:
         structural = validate_structure(size, grid)
         solutions = solve_hitori(size, grid, 2) if not structural else []
         selected_mask = solutions[0] if solutions else _mask_from_string(parent.solution, size)
-        validity = "malformed" if transformation == "malformed" else "invalid" if structural else "valid"
+        validity = "malformed" if transformation.startswith("malformed") else "invalid" if structural else "valid"
         solvability = "unknown" if validity != "valid" else "unique" if len(solutions) == 1 else "ambiguous" if len(solutions) > 1 else "unsolvable"
         puzzle = canonical_puzzle(grid)
         variant_id = hashlib.sha1(f"{parent.puzzle_id}|{transformation}|{puzzle}".encode()).hexdigest()[:16]
-        return PuzzleRecord(puzzle_id=variant_id, puzzle=puzzle, solution=_mask_string(selected_mask), difficulty=parent.difficulty, num_clues=size * size, required_strategies=list(parent.required_strategies), unique_solution_status=solvability == "unique", source=parent.source, canonical_signature=parent.canonical_signature, usage_count=self.usage_stats.get(variant_id, 0), parent_puzzle_id=parent.puzzle_id, transformation=transformation, rendered_board=rendered_board or render_hitori(size, grid), ground_truth=_build_ground_truth(size, grid, solutions, selected_mask, validity, solvability, structural), metadata={"size": size, "grid": grid, **({"edge_case_kind": transformation} if transformation in {"malformed", "invalid_grid", "unsolvable", "ambiguous"} else {})})
+        edge_kind = next((kind for kind in ("malformed", "invalid_grid", "unsolvable", "ambiguous") if transformation.startswith(kind)), None)
+        return PuzzleRecord(puzzle_id=variant_id, puzzle=puzzle, solution=_mask_string(selected_mask), difficulty=parent.difficulty, num_clues=size * size, required_strategies=list(parent.required_strategies), unique_solution_status=solvability == "unique", source=parent.source, canonical_signature=parent.canonical_signature, usage_count=self.usage_stats.get(variant_id, 0), parent_puzzle_id=parent.puzzle_id, transformation=transformation, rendered_board=rendered_board or render_hitori(size, grid), ground_truth=_build_ground_truth(size, grid, solutions, selected_mask, validity, solvability, structural), metadata={"size": size, "grid": grid, **({"edge_case_kind": edge_kind} if edge_kind else {})})
 
     def _ensure_bank(self) -> None:
         if not self.bank_path.exists():

@@ -24,6 +24,7 @@ defaults:
   puzzles:
     persistent_bank_filename: puzzle_bank.jsonl
     usage_stats_filename: puzzle_usage.json
+    min_tools_per_sample: 2
   similarity:
     max_history: 5000
     ngram_size: 3
@@ -93,8 +94,13 @@ defaults:
   domains:
     chess:
       puzzles:
-        persistent_bank_filename: chess_position_bank.jsonl
-        usage_stats_filename: chess_position_usage.json
+        persistent_bank_filename: chess_position_bank_v2.jsonl
+        usage_stats_filename: chess_position_usage_v2.json
+        catalog_version: chess-v2
+        lineage_count: 256
+        snapshots_per_lineage: 4
+        edge_case_rate: 0.15
+        min_tools_per_sample: 2
       chess:
         engine_path: auto
         engine_auto_install: true

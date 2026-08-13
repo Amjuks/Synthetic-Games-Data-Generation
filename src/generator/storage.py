@@ -43,6 +43,9 @@ class DatasetStorage:
     def get_rejected_count(self) -> int:
         return len(self._rejected_history)
 
+    def get_rejected_history(self) -> list[dict[str, Any]]:
+        return list(self._rejected_history)
+
     def get_stats(self) -> dict[str, Any]:
         return dict(self._stats)
 

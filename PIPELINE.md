@@ -132,53 +132,81 @@ Output:
 
 How it works:
 - Tool usage is decided by the selected adapter.
-- If no tool is required, the sample records `used: false`.
-- If a tool is required, the sample records tool name, input, output, and reason.
+- Every supported domain currently requires at least two distinct, verified calls per accepted sample.
+- The first call remains in the legacy primary-tool fields; the complete ordered bundle is recorded under `calls` with each tool's name, input, output, and reason.
 
 Current Sudoku tools:
 - `sudoku_candidate_scan`
 - `sudoku_board_validation`
 - `sudoku_solution_verification`
+- `sudoku_rules_reference`
+- `sudoku_board_summary`
 
 Current KenKen tools:
 - `kenken_cage_analysis`
 - `kenken_constraint_validation`
 - `kenken_solution_verification`
+- `kenken_rules_reference`
+- `kenken_puzzle_summary`
 
 Current Kakuro tools:
 - `kakuro_run_analysis`
 - `kakuro_constraint_validation`
 - `kakuro_solution_verification`
+- `kakuro_rules_reference`
+- `kakuro_puzzle_summary`
 
 Current Star Battle tools:
 - `starbattle_candidate_analysis`
 - `starbattle_constraint_validation`
 - `starbattle_solution_verification`
+- `starbattle_rules_reference`
+- `starbattle_puzzle_summary`
 
 Current Nonogram tools:
 - `nonogram_line_analysis`
 - `nonogram_constraint_validation`
 - `nonogram_solution_verification`
+- `nonogram_rules_reference`
+- `nonogram_puzzle_summary`
 
 Current Hitori tools:
 - `hitori_duplicate_analysis`
 - `hitori_constraint_validation`
 - `hitori_solution_verification`
+- `hitori_rules_reference`
+- `hitori_puzzle_summary`
+
+Current Nurikabe tools:
+- `nurikabe_deduction_scan`
+- `nurikabe_constraint_validation`
+- `nurikabe_solution_verification`
+- `nurikabe_rules_reference`
+- `nurikabe_puzzle_summary`
 
 Current Chess tools:
 - `chess_parse_validate`
 - `chess_reconstruct_position`
+- `chess_rules_reference`
+- `chess_legal_example`
+- `chess_input_diagnosis`
 - `chess_legal_moves`
+- `chess_legal_alternatives`
+- `chess_move_validation`
 - `chess_move_conversion`
 - `chess_move_application`
 - `chess_move_undo`
+- `chess_position_summary`
+- `chess_material_analysis`
+- `chess_positional_features`
+- `chess_repetition_history`
 - `chess_tactical_inspection`
 - `chess_position_status`
 - `chess_engine_analysis`
 - `chess_tablebase_lookup`
 - `chess_state_trace`
 
-Chess keeps multiple ordered calls under `tool_usage_details.calls` while retaining the existing primary `tool_name`, `tool_input`, `tool_output`, and `reason` fields. Chess-specific code remains in `src/generator/chess.py` and `src/generator/domains/chess.py`. Game-history and FEN descendants share a lineage ID and dataset split; multi-turn verification includes an exact legal `fen_before`/`fen_after` trace for each played move.
+Chess requires at least two successful, distinct calls and exact required/used-tool agreement. It keeps ordered calls under `tool_usage_details.calls` while retaining the existing primary `tool_name`, `tool_input`, `tool_output`, and `reason` fields; flat exports also include `tool_count`, `tool_names`, `tool_calls`, and `tool_bundle_signature`. Difficulty must equal the band computed from the position complexity score, while scheduling cycles through all four bands. Chess-specific code remains in `src/generator/chess.py` and `src/generator/domains/chess.py`. The `chess-v2` catalog supplies at least 256 deterministic game lineages, up to four snapshots per lineage, and dedicated special-position families. Canonical first-four-FEN-field and rendered-input signatures are reserved from accepted and rejected job history, preventing board or input reuse across retries and resumes. Game-history and FEN descendants share a lineage ID and dataset split; multi-turn verification includes an exact legal `fen_before`/`fen_after` trace for each played move. Edge scheduling is deterministic at three records per rolling 20-record window, with every edge derived from a unique valid base position and supplied with a category-compatible diagnostic bundle.
 
 Stockfish verification is provisioned by `src/generator/chess_backends.py`: it uses configured/PATH binaries when present, otherwise selects the official stable platform asset, validates its release SHA-256, performs safe extraction and a UCI healthcheck, and caches it under the ignored output directory. Local Syzygy files take priority over the retrying online tablebase. With the default `verification_backends_required: true`, a missing or failed backend stops an objective engine/tablebase sample before the LLM request instead of emitting partially verified data. `python -m src.generator.chess_setup` performs an end-to-end backend healthcheck.
 
@@ -188,6 +216,8 @@ Tool output is included in:
 - rejected sample records
 - CSV output columns
 - dataset statistics
+
+All puzzle domains use ordered multi-tool bundles with at least two distinct verified calls per record. Shared code handles bundle schema, flattened export fields, complexity metadata, resume reservations, and enforcement only; each domain adapter selects and executes its own rules, summary, candidate/deduction, constraint, and solution-verification tools. Difficulty scheduling cycles across easy, medium, hard, and expert whenever all four are configured.
 
 ### 5. LLM Chat Generator
 Implementation:

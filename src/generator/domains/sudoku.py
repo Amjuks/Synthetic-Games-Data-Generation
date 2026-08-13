@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..domain_support import VariedDomainSupport, build_tool_usage, compact_tool_context
 from ..models import PuzzleRecord, Scenario, ValidationResult
 from ..puzzles import PuzzleManager
 from ..scenario import ScenarioGenerator
 from ..validation import SampleValidator
 
 
-class SudokuDomainAdapter:
+class SudokuDomainAdapter(VariedDomainSupport):
     name = "sudoku"
 
     def __init__(self, config: dict[str, Any]):
@@ -17,6 +18,7 @@ class SudokuDomainAdapter:
         self.scenario_generator = ScenarioGenerator(config)
         self.puzzle_manager = PuzzleManager(config)
         self.validator = SampleValidator()
+        self._initialize_variety_support()
 
     def generate_scenario(
         self,
@@ -34,44 +36,25 @@ class SudokuDomainAdapter:
         )
 
     def select_problem(self, scenario: Scenario, sample_index: int) -> PuzzleRecord:
-        return self.puzzle_manager.select_puzzle(scenario, sample_index)
+        return self._select_varied_problem(scenario, sample_index)
 
     def mark_problem_used(self, puzzle: PuzzleRecord) -> None:
         self.puzzle_manager.mark_used(puzzle)
 
     def maybe_use_tool(self, scenario: Scenario, puzzle: PuzzleRecord) -> dict[str, Any]:
-        tool_name = self._tool_name_for_scenario(scenario)
-        if tool_name is None:
-            return {
-                "used": False,
-                "tool_name": None,
-                "tool_input": None,
-                "tool_output": None,
-                "reason": None,
-            }
-
-        tool_input = {
-            "puzzle_id": puzzle.puzzle_id,
-            "task_category": scenario.task_category,
-            "edge_case": scenario.edge_case,
-            "board": puzzle.rendered_board,
-        }
-        return {
-            "used": True,
-            "tool_name": tool_name,
-            "tool_input": tool_input,
-            "tool_output": self._run_tool(tool_name, puzzle),
-            "reason": self._tool_reason(tool_name, scenario),
-        }
+        return build_tool_usage(
+            scenario=scenario,
+            puzzle=puzzle,
+            tool_names=self._tool_bundle(scenario),
+            input_for=lambda name: {"puzzle_id": puzzle.puzzle_id, "task_category": scenario.task_category, "edge_case": scenario.edge_case, "board": puzzle.rendered_board},
+            output_for=lambda name: self._run_tool(name, puzzle),
+        )
 
     def validate(self, output: dict[str, Any], scenario: Scenario, puzzle: PuzzleRecord) -> ValidationResult:
         return self.validator.validate(output, scenario, puzzle)
 
     def prompt_context(self, scenario: Scenario, puzzle: PuzzleRecord, tool_usage: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "domain": self.name,
-            "tool_usage": tool_usage,
-        }
+        return compact_tool_context(self.name, puzzle, tool_usage)
 
     def prompt_problem(self, puzzle: PuzzleRecord) -> dict[str, Any]:
         return {
@@ -95,7 +78,18 @@ class SudokuDomainAdapter:
         row["domain"] = sample.get("domain", self.name)
         row["tool_used"] = sample.get("tool_used", False)
         row["tool_name"] = sample.get("tool_usage_details", {}).get("tool_name")
+        self._add_flat_tool_metadata(row, sample)
         return row
+
+    def _tool_bundle(self, scenario: Scenario) -> list[str]:
+        if scenario.task_category in {"rules_explanation", "beginner_question", "general_chat"}:
+            return ["sudoku_rules_reference", "sudoku_board_summary"]
+        primary = self._tool_name_for_scenario(scenario)
+        if primary == "sudoku_solution_verification":
+            return ["sudoku_candidate_scan", primary]
+        if primary == "sudoku_candidate_scan": return [primary, "sudoku_board_validation"]
+        if primary == "sudoku_board_validation": return [primary, "sudoku_candidate_scan"]
+        return [primary or "sudoku_candidate_scan", "sudoku_board_validation"]
 
     def _tool_name_for_scenario(self, scenario: Scenario) -> str | None:
         if scenario.tool_usage == "candidate_scan" or scenario.task_category in {"hint", "next_best_move"}:
@@ -127,6 +121,10 @@ class SudokuDomainAdapter:
                 "solved_board": ground_truth.get("solved_board"),
                 "unique_solution_status": ground_truth.get("unique_solution_status"),
             }
+        if tool_name == "sudoku_rules_reference":
+            return {"rules": ["Place 1–9 once in every row, column, and 3x3 box.", "Given cells cannot be changed."]}
+        if tool_name == "sudoku_board_summary":
+            return {"given_count": puzzle.num_clues, "empty_count": 81 - puzzle.num_clues, "difficulty": puzzle.difficulty, "strategies": puzzle.required_strategies}
         return {}
 
     def _tool_reason(self, tool_name: str, scenario: Scenario) -> str:

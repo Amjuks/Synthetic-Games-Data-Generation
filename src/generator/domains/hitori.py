@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..domain_support import VariedDomainSupport, build_tool_usage, compact_tool_context
 from ..hitori import HitoriPuzzleManager, parse_puzzle, validate_structure
 from ..models import PuzzleRecord, Scenario, ValidationResult
 from ..scenario import ScenarioGenerator
@@ -48,33 +49,37 @@ class HitoriValidator:
         return ValidationResult(is_valid=not errors, errors=errors)
 
 
-class HitoriDomainAdapter:
+class HitoriDomainAdapter(VariedDomainSupport):
     name = "hitori"
     def __init__(self, config: dict[str, Any]):
         self.config, self.prompts = config, config.get("prompts", {})
         self.scenario_generator, self.puzzle_manager, self.validator = HitoriScenarioGenerator(config), HitoriPuzzleManager(config), HitoriValidator()
+        self._initialize_variety_support()
     def generate_scenario(self, **kwargs: Any) -> Scenario: return self.scenario_generator.generate(**kwargs)
-    def select_problem(self, scenario: Scenario, sample_index: int) -> PuzzleRecord: return self.puzzle_manager.select_puzzle(scenario, sample_index)
+    def select_problem(self, scenario: Scenario, sample_index: int) -> PuzzleRecord: return self._select_varied_problem(scenario, sample_index)
     def mark_problem_used(self, puzzle: PuzzleRecord) -> None: self.puzzle_manager.mark_used(puzzle)
     def validate(self, output: dict[str, Any], scenario: Scenario, puzzle: PuzzleRecord) -> ValidationResult: return self.validator.validate(output, scenario, puzzle)
     def maybe_use_tool(self, scenario: Scenario, puzzle: PuzzleRecord) -> dict[str, Any]:
-        name = self._tool_name(scenario)
-        if not name: return {"used": False, "tool_name": None, "tool_input": None, "tool_output": None, "reason": None}
         truth = puzzle.ground_truth
-        outputs = {"hitori_duplicate_analysis": {"forced_shaded": truth.get("forced_shaded", []), "forced_unshaded": truth.get("forced_unshaded", []), "suggested_move": truth.get("suggested_move")}, "hitori_constraint_validation": {"validity_status": truth.get("validity_status"), "solvability_status": truth.get("solvability_status"), "structural_violations": truth.get("structural_violations", []), "solution_violations": truth.get("solution_violations", [])}, "hitori_solution_verification": {"solution": truth.get("solution"), "solution_mask": truth.get("solution_mask"), "unique_solution_status": truth.get("unique_solution_status")}}
-        return {"used": True, "tool_name": name, "tool_input": {"puzzle_id": puzzle.puzzle_id, "task_category": scenario.task_category, "edge_case": scenario.edge_case, "size": puzzle.metadata.get("size")}, "tool_output": outputs[name], "reason": "The scenario needs deterministic Hitori duplicate and connectivity evidence."}
+        outputs = {"hitori_duplicate_analysis": {"forced_shaded": truth.get("forced_shaded", []), "forced_unshaded": truth.get("forced_unshaded", []), "suggested_move": truth.get("suggested_move")}, "hitori_constraint_validation": {"validity_status": truth.get("validity_status"), "solvability_status": truth.get("solvability_status"), "structural_violations": truth.get("structural_violations", []), "solution_violations": truth.get("solution_violations", [])}, "hitori_solution_verification": {"solution": truth.get("solution"), "solution_mask": truth.get("solution_mask"), "unique_solution_status": truth.get("unique_solution_status")}, "hitori_rules_reference": {"rules": ["Unshaded values are unique in each row and column.", "Shaded cells do not touch orthogonally and unshaded cells stay connected."]}, "hitori_puzzle_summary": {"size": puzzle.metadata.get("size"), "cell_count": puzzle.num_clues, "difficulty": puzzle.difficulty}}
+        return build_tool_usage(scenario=scenario, puzzle=puzzle, tool_names=self._tool_bundle(scenario), input_for=lambda name: {"puzzle_id": puzzle.puzzle_id, "task_category": scenario.task_category, "edge_case": scenario.edge_case, "size": puzzle.metadata.get("size")}, output_for=lambda name: outputs[name])
     def prompt_problem(self, puzzle: PuzzleRecord) -> dict[str, Any]: return {"puzzle_id": puzzle.puzzle_id, "size": puzzle.metadata.get("size"), "difficulty": puzzle.difficulty, "required_strategies": puzzle.required_strategies, "transformation": puzzle.transformation}
     def prompt_ground_truth(self, puzzle: PuzzleRecord) -> dict[str, Any]:
         truth = puzzle.ground_truth
         return {key: truth.get(key) for key in ("solution_mask", "validity_status", "solvability_status", "unique_solution_status", "solution_count", "suggested_move")} | {"structural_violations": truth.get("structural_violations", [])[:10], "solution_violations": truth.get("solution_violations", [])[:10], "forced_shaded": truth.get("forced_shaded", [])[:12], "forced_unshaded": truth.get("forced_unshaded", [])[:12]}
     def prompt_context(self, scenario: Scenario, puzzle: PuzzleRecord, tool_usage: dict[str, Any]) -> dict[str, Any]:
-        del scenario, puzzle
-        output = dict(tool_usage.get("tool_output") or {}); output["forced_shaded"] = output.get("forced_shaded", [])[:12]; output["forced_unshaded"] = output.get("forced_unshaded", [])[:12]
-        if tool_usage.get("tool_name") == "hitori_solution_verification": output.pop("solution", None); output.pop("solution_mask", None)
-        return {"domain": self.name, "tool_usage": {**tool_usage, "tool_output": output}}
+        del scenario
+        return compact_tool_context(self.name, puzzle, tool_usage)
     def generation_guidance(self) -> str: return "Use the supplied Hitori grid exactly. Unshaded values must be unique in each row and column, shaded cells cannot touch, and all unshaded cells must remain connected."
     def flatten_sample_row(self, row: dict[str, Any], sample: dict[str, Any]) -> dict[str, Any]:
-        metadata = sample.get("puzzle_metadata", {}).get("metadata", {}); row.update({"domain": sample.get("domain", self.name), "grid_size": metadata.get("size"), "grid": metadata.get("grid", []), "tool_used": sample.get("tool_used", False), "tool_name": sample.get("tool_usage_details", {}).get("tool_name")}); return row
+        metadata = sample.get("puzzle_metadata", {}).get("metadata", {}); row.update({"domain": sample.get("domain", self.name), "grid_size": metadata.get("size"), "grid": metadata.get("grid", []), "tool_used": sample.get("tool_used", False), "tool_name": sample.get("tool_usage_details", {}).get("tool_name")}); self._add_flat_tool_metadata(row, sample); return row
+    def _tool_bundle(self, scenario: Scenario) -> list[str]:
+        if scenario.task_category in {"rules_explanation", "beginner_question", "general_chat"}: return ["hitori_rules_reference", "hitori_puzzle_summary"]
+        primary = self._tool_name(scenario)
+        if primary == "hitori_solution_verification": return ["hitori_duplicate_analysis", primary]
+        if primary == "hitori_duplicate_analysis": return [primary, "hitori_constraint_validation"]
+        if primary == "hitori_constraint_validation": return [primary, "hitori_duplicate_analysis"]
+        return [primary or "hitori_puzzle_summary", "hitori_constraint_validation"]
     @staticmethod
     def _tool_name(scenario: Scenario) -> str | None:
         if scenario.edge_case in {"invalid_grid", "unsolvable_puzzle", "ambiguous_puzzle"} or scenario.tool_usage == "constraint_check" or scenario.task_category in {"validity_check", "mistake_correction"}: return "hitori_constraint_validation"

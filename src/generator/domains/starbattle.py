@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..domain_support import VariedDomainSupport, build_tool_usage
 from ..models import PuzzleRecord, Scenario, ValidationResult
 from ..scenario import ScenarioGenerator
 from ..starbattle import StarBattlePuzzleManager, parse_puzzle, validate_structure
@@ -101,7 +102,7 @@ class StarBattleValidator:
         return ValidationResult(is_valid=not errors, errors=errors)
 
 
-class StarBattleDomainAdapter:
+class StarBattleDomainAdapter(VariedDomainSupport):
     name = "starbattle"
 
     def __init__(self, config: dict[str, Any]):
@@ -110,6 +111,7 @@ class StarBattleDomainAdapter:
         self.scenario_generator = StarBattleScenarioGenerator(config)
         self.puzzle_manager = StarBattlePuzzleManager(config)
         self.validator = StarBattleValidator()
+        self._initialize_variety_support()
 
     def generate_scenario(
         self,
@@ -127,35 +129,13 @@ class StarBattleDomainAdapter:
         )
 
     def select_problem(self, scenario: Scenario, sample_index: int) -> PuzzleRecord:
-        return self.puzzle_manager.select_puzzle(scenario, sample_index)
+        return self._select_varied_problem(scenario, sample_index)
 
     def mark_problem_used(self, puzzle: PuzzleRecord) -> None:
         self.puzzle_manager.mark_used(puzzle)
 
     def maybe_use_tool(self, scenario: Scenario, puzzle: PuzzleRecord) -> dict[str, Any]:
-        tool_name = self._tool_name_for_scenario(scenario)
-        if tool_name is None:
-            return {
-                "used": False,
-                "tool_name": None,
-                "tool_input": None,
-                "tool_output": None,
-                "reason": None,
-            }
-        return {
-            "used": True,
-            "tool_name": tool_name,
-            "tool_input": {
-                "puzzle_id": puzzle.puzzle_id,
-                "task_category": scenario.task_category,
-                "edge_case": scenario.edge_case,
-                "size": puzzle.metadata.get("size"),
-                "stars_per_unit": puzzle.metadata.get("stars_per_unit"),
-                "regions": puzzle.metadata.get("regions", []),
-            },
-            "tool_output": self._run_tool(tool_name, puzzle),
-            "reason": self._tool_reason(tool_name, scenario),
-        }
+        return build_tool_usage(scenario=scenario, puzzle=puzzle, tool_names=self._tool_bundle(scenario), input_for=lambda name: {"puzzle_id": puzzle.puzzle_id, "task_category": scenario.task_category, "edge_case": scenario.edge_case, "size": puzzle.metadata.get("size"), "stars_per_unit": puzzle.metadata.get("stars_per_unit"), "regions": puzzle.metadata.get("regions", [])}, output_for=lambda name: self._run_tool(name, puzzle))
 
     def validate(
         self,
@@ -213,6 +193,15 @@ class StarBattleDomainAdapter:
                 "tool_output": output,
                 "reason": tool_usage.get("reason"),
             },
+            "calls": [
+                {
+                    "tool_name": call["tool_name"],
+                    "input": {key: value for key, value in call["input"].items() if key != "regions"},
+                    "output": {key: value for key, value in call["output"].items() if key not in {"solution", "solution_grid"}},
+                    "reason": call["reason"],
+                }
+                for call in tool_usage.get("calls", [])
+            ],
         }
 
     def generation_guidance(self) -> str:
@@ -229,7 +218,16 @@ class StarBattleDomainAdapter:
         row["regions"] = metadata.get("regions", [])
         row["tool_used"] = sample.get("tool_used", False)
         row["tool_name"] = sample.get("tool_usage_details", {}).get("tool_name")
+        self._add_flat_tool_metadata(row, sample)
         return row
+
+    def _tool_bundle(self, scenario: Scenario) -> list[str]:
+        if scenario.task_category in {"rules_explanation", "beginner_question", "general_chat"}: return ["starbattle_rules_reference", "starbattle_puzzle_summary"]
+        primary = self._tool_name_for_scenario(scenario)
+        if primary == "starbattle_solution_verification": return ["starbattle_candidate_analysis", primary]
+        if primary == "starbattle_candidate_analysis": return [primary, "starbattle_constraint_validation"]
+        if primary == "starbattle_constraint_validation": return [primary, "starbattle_candidate_analysis"]
+        return [primary or "starbattle_puzzle_summary", "starbattle_constraint_validation"]
 
     def _tool_name_for_scenario(self, scenario: Scenario) -> str | None:
         if scenario.edge_case in {"invalid_regions", "unsolvable_puzzle", "ambiguous_puzzle"}:
@@ -271,6 +269,8 @@ class StarBattleDomainAdapter:
                 "solution_grid": truth.get("solution_grid"),
                 "unique_solution_status": truth.get("unique_solution_status"),
             }
+        if tool_name == "starbattle_rules_reference": return {"rules": ["Place the required stars in every row, column, and region.", "Stars cannot touch, including diagonally."]}
+        if tool_name == "starbattle_puzzle_summary": return {"size": puzzle.metadata.get("size"), "stars_per_unit": puzzle.metadata.get("stars_per_unit"), "region_count": len(puzzle.metadata.get("regions", [])), "difficulty": puzzle.difficulty}
         return {}
 
     def _tool_reason(self, tool_name: str, scenario: Scenario) -> str:

@@ -64,6 +64,13 @@ class ConversationGenerator:
 
         storage = DatasetStorage(job_manager.job_dir, self.config, domain_adapter=self.domain)
         history = storage.get_history()
+        prepare_job = getattr(self.domain, "prepare_job", None)
+        if callable(prepare_job):
+            prepare_job(
+                job_dir=job_manager.job_dir,
+                accepted_history=history,
+                rejected_history=storage.get_rejected_history(),
+            )
         distribution_stats = self.diversity_checker.summarize_distribution(history)
         resume_state = job_manager.get_resume_state()
         completed = resume_state["completed"]
@@ -328,6 +335,10 @@ class ConversationGenerator:
                 },
             )
             validation_result = self.domain.validate(output, scenario, puzzle)
+            tool_validator = getattr(self.domain, "tool_validation_errors", None)
+            if callable(tool_validator):
+                validation_result.errors.extend(tool_validator(puzzle))
+                validation_result.is_valid = not validation_result.errors
             if not validation_result.is_valid:
                 rejected_count += 1
                 rejection = self._build_rejection_record(
@@ -473,7 +484,11 @@ class ConversationGenerator:
                 response_characters=len(raw_output),
                 raw_response=raw_output,
             )
-        return self._parse_output(raw_output, scenario, puzzle)
+        output = self._parse_output(raw_output, scenario, puzzle)
+        normalize_output = getattr(self.domain, "normalize_output", None)
+        if callable(normalize_output):
+            output = normalize_output(output, scenario, puzzle)
+        return output
 
     def _describe_model_request(self, prompt: str) -> dict[str, Any]:
         describe = getattr(self.model_client, "describe_request", None)

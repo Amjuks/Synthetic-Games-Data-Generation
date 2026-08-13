@@ -138,21 +138,25 @@ class NonogramPuzzleManager:
         candidates = [puzzle for puzzle in self.base_bank if puzzle.difficulty == scenario.difficulty] or self.base_bank
         parent = min(candidates, key=lambda puzzle: (self.usage_stats.get(puzzle.puzzle_id, 0), puzzle.num_clues))
         if scenario.edge_case == "malformed_input":
-            return self._make_variant(parent, "malformed", rendered_board="Nonogram clues: R1 (2, ???) | C1 = [", edge_case_kind="malformed_input")
+            malformed = ("Nonogram clues: R1 (2, ???) | C1 = [", "Nonogram rows: [3], [x]; columns missing", "Nonogram ?x?: R=[1,1], C={broken}")[sample_index % 3]
+            return self._make_variant(parent, f"malformed_{sample_index}", rendered_board=malformed, edge_case_kind="malformed_input")
         if scenario.edge_case == "invalid_clues":
             height, width, rows, columns = parse_puzzle(parent.puzzle)
             rows = deepcopy(rows)
-            rows[0] = [width + 1]
-            return self._make_variant(parent, "invalid_clues", row_clues=rows, column_clues=columns, edge_case_kind="invalid_clues")
+            row = sample_index % height
+            rows[row] = [width + 1 + (sample_index % 3)]
+            return self._make_variant(parent, f"invalid_clues_row_{row}_{rows[row][0]}", row_clues=rows, column_clues=columns, edge_case_kind="invalid_clues")
         if scenario.edge_case == "unsolvable_puzzle":
             height, width, _, _ = parse_puzzle(parent.puzzle)
-            rows, columns = [[width] for _ in range(height)], [[1] for _ in range(width)]
-            return self._make_variant(parent, "unsolvable", row_clues=rows, column_clues=columns, edge_case_kind="unsolvable_puzzle")
+            contradiction = 1 + sample_index % max(1, height - 1)
+            rows, columns = [[width] for _ in range(height)], [[contradiction] for _ in range(width)]
+            return self._make_variant(parent, f"unsolvable_columns_{contradiction}", row_clues=rows, column_clues=columns, edge_case_kind="unsolvable_puzzle")
         if scenario.edge_case == "ambiguous_puzzle":
             height, width, _, _ = parse_puzzle(parent.puzzle)
             rows, columns = [[1] for _ in range(height)], [[1] for _ in range(width)]
             return self._make_variant(parent, "ambiguous", row_clues=rows, column_clues=columns, edge_case_kind="ambiguous_puzzle")
-        operation = ("identity", "reflect_horizontal", "reflect_vertical", "rotate_90")[sample_index % 4]
+        operations = ("identity", "reflect_horizontal", "reflect_vertical", "rotate_90", "rotate_180", "rotate_270", "transpose", "anti_transpose")
+        operation = operations[sample_index % len(operations)]
         return self._make_transformed_variant(parent, operation)
 
     def mark_used(self, puzzle: PuzzleRecord) -> None:
@@ -169,6 +173,14 @@ class NonogramPuzzleManager:
             grid = [list(reversed(row)) for row in grid]
         elif operation == "rotate_90":
             grid = [list(row) for row in zip(*grid[::-1])]
+        elif operation == "rotate_180":
+            grid = [list(reversed(row)) for row in reversed(grid)]
+        elif operation == "rotate_270":
+            grid = [list(row) for row in zip(*grid)][::-1]
+        elif operation == "transpose":
+            grid = [list(row) for row in zip(*grid)]
+        elif operation == "anti_transpose":
+            grid = [list(row) for row in zip(*[list(reversed(row)) for row in reversed(grid)])]
         rows, columns = _clues_from_grid(grid)
         return self._make_variant(parent, operation, row_clues=rows, column_clues=columns, solution_grid=grid)
 

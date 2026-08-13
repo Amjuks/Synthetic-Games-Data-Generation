@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..domain_support import VariedDomainSupport, build_tool_usage
 from ..kenken import KenKenPuzzleManager, parse_puzzle, validate_structure
 from ..models import PuzzleRecord, Scenario, ValidationResult
 from ..scenario import ScenarioGenerator
@@ -89,7 +90,7 @@ class KenKenValidator:
         return ValidationResult(is_valid=not errors, errors=errors)
 
 
-class KenKenDomainAdapter:
+class KenKenDomainAdapter(VariedDomainSupport):
     name = "kenken"
 
     def __init__(self, config: dict[str, Any]):
@@ -98,6 +99,7 @@ class KenKenDomainAdapter:
         self.scenario_generator = KenKenScenarioGenerator(config)
         self.puzzle_manager = KenKenPuzzleManager(config)
         self.validator = KenKenValidator()
+        self._initialize_variety_support()
 
     def generate_scenario(
         self,
@@ -115,28 +117,13 @@ class KenKenDomainAdapter:
         )
 
     def select_problem(self, scenario: Scenario, sample_index: int) -> PuzzleRecord:
-        return self.puzzle_manager.select_puzzle(scenario, sample_index)
+        return self._select_varied_problem(scenario, sample_index)
 
     def mark_problem_used(self, puzzle: PuzzleRecord) -> None:
         self.puzzle_manager.mark_used(puzzle)
 
     def maybe_use_tool(self, scenario: Scenario, puzzle: PuzzleRecord) -> dict[str, Any]:
-        tool_name = self._tool_name_for_scenario(scenario)
-        if tool_name is None:
-            return {"used": False, "tool_name": None, "tool_input": None, "tool_output": None, "reason": None}
-        return {
-            "used": True,
-            "tool_name": tool_name,
-            "tool_input": {
-                "puzzle_id": puzzle.puzzle_id,
-                "task_category": scenario.task_category,
-                "edge_case": scenario.edge_case,
-                "size": puzzle.metadata.get("size"),
-                "cages": puzzle.metadata.get("cages", []),
-            },
-            "tool_output": self._run_tool(tool_name, puzzle),
-            "reason": self._tool_reason(tool_name, scenario),
-        }
+        return build_tool_usage(scenario=scenario, puzzle=puzzle, tool_names=self._tool_bundle(scenario), input_for=lambda name: {"puzzle_id": puzzle.puzzle_id, "task_category": scenario.task_category, "edge_case": scenario.edge_case, "size": puzzle.metadata.get("size"), "cages": puzzle.metadata.get("cages", [])}, output_for=lambda name: self._run_tool(name, puzzle))
 
     def validate(self, output: dict[str, Any], scenario: Scenario, puzzle: PuzzleRecord) -> ValidationResult:
         return self.validator.validate(output, scenario, puzzle)
@@ -144,7 +131,8 @@ class KenKenDomainAdapter:
     def prompt_context(self, scenario: Scenario, puzzle: PuzzleRecord, tool_usage: dict[str, Any]) -> dict[str, Any]:
         return {
             "domain": self.name,
-            "tool_usage": self._compact_tool_usage(tool_usage, puzzle),
+            "tools_required": puzzle.metadata.get("tools_required", []),
+            "calls": [self._compact_tool_usage({"used": True, "tool_name": call["tool_name"], "tool_input": call["input"], "tool_output": call["output"], "reason": call["reason"]}, puzzle) for call in tool_usage.get("calls", [])],
         }
 
     def prompt_problem(self, puzzle: PuzzleRecord) -> dict[str, Any]:
@@ -283,7 +271,16 @@ class KenKenDomainAdapter:
         row["cages"] = metadata.get("cages", [])
         row["tool_used"] = sample.get("tool_used", False)
         row["tool_name"] = sample.get("tool_usage_details", {}).get("tool_name")
+        self._add_flat_tool_metadata(row, sample)
         return row
+
+    def _tool_bundle(self, scenario: Scenario) -> list[str]:
+        if scenario.task_category in {"rules_explanation", "beginner_question", "general_chat"}: return ["kenken_rules_reference", "kenken_puzzle_summary"]
+        primary = self._tool_name_for_scenario(scenario)
+        if primary == "kenken_solution_verification": return ["kenken_cage_analysis", primary]
+        if primary == "kenken_cage_analysis": return [primary, "kenken_constraint_validation"]
+        if primary == "kenken_constraint_validation": return [primary, "kenken_cage_analysis"]
+        return [primary or "kenken_puzzle_summary", "kenken_constraint_validation"]
 
     def _tool_name_for_scenario(self, scenario: Scenario) -> str | None:
         if scenario.edge_case in {"invalid_cages", "unsolvable_puzzle", "ambiguous_puzzle"}:
@@ -317,6 +314,8 @@ class KenKenDomainAdapter:
                 "solution_grid": truth.get("solution_grid"),
                 "unique_solution_status": truth.get("unique_solution_status"),
             }
+        if tool_name == "kenken_rules_reference": return {"rules": ["Use each number once per row and column.", "Every cage must satisfy its target and operation."]}
+        if tool_name == "kenken_puzzle_summary": return {"size": puzzle.metadata.get("size"), "cage_count": len(puzzle.metadata.get("cages", [])), "difficulty": puzzle.difficulty, "strategies": puzzle.required_strategies}
         return {}
 
     def _tool_reason(self, tool_name: str, scenario: Scenario) -> str:

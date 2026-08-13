@@ -155,11 +155,16 @@ class NurikabePuzzleManager:
             # explicit ambiguity edge case.
             altered = [[0, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 4, 0]]
             return self._variant(parent, "ambiguous", clues=altered)
-        operation = ("identity", "reflect_horizontal", "reflect_vertical", "rotate_90")[sample_index % 4]
+        operations = ("identity", "reflect_horizontal", "reflect_vertical", "rotate_90", "rotate_180", "rotate_270", "transpose", "anti_transpose")
+        operation = operations[sample_index % len(operations)]
         transformed = deepcopy(clues)
         if operation == "reflect_horizontal": transformed = list(reversed(transformed))
         elif operation == "reflect_vertical": transformed = [list(reversed(row)) for row in transformed]
         elif operation == "rotate_90": transformed = [list(row) for row in zip(*transformed[::-1])]
+        elif operation == "rotate_180": transformed = [list(reversed(row)) for row in reversed(transformed)]
+        elif operation == "rotate_270": transformed = [list(row) for row in zip(*transformed)][::-1]
+        elif operation == "transpose": transformed = [list(row) for row in zip(*transformed)]
+        elif operation == "anti_transpose": transformed = [list(row) for row in zip(*[list(reversed(row)) for row in reversed(transformed)])]
         return self._variant(parent, operation, clues=transformed)
 
     def mark_used(self, puzzle: PuzzleRecord) -> None:

@@ -32,6 +32,12 @@ class ScenarioGenerator:
             distribution_stats.get("difficulty_distribution", {}),
             rng,
         )
+        difficulty_options = self.scenario_config.get("difficulty_levels", [])
+        if set(difficulty_options) >= {"easy", "medium", "hard", "expert"}:
+            max_attempts = max(1, int(self.config.get("generation", {}).get("max_regeneration_attempts", 3)))
+            dataset_index = sample_index // max_attempts
+            conversation_bit = 1 if conversation_type == "multi_turn" else 0
+            difficulty = ("easy", "medium", "hard", "expert")[(dataset_index * 2 + conversation_bit) % 4]
         user_expertise = self._pick_underrepresented(
             self.scenario_config.get("user_expertise_levels", []),
             distribution_stats.get("user_expertise_distribution", {}),

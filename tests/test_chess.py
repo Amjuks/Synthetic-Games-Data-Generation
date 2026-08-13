@@ -4,7 +4,7 @@ import json
 import chess
 import pytest
 
-from src.generator.chess import ChessProblemManager, ChessToolkit, split_for_lineage
+from src.generator.chess import ChessProblemManager, ChessToolkit, complexity_band, split_for_lineage
 from src.generator.config import resolve_domain_config
 from src.generator.domains.chess import ChessDomainAdapter
 from src.generator.generator import ConversationGenerator
@@ -20,7 +20,7 @@ def chess_config(tmp_path):
         "generation": {"random_seed": 29, "max_regeneration_attempts": 2, "max_prompt_characters": 100_000},
         "model": {"model_name": "test-model"},
         "storage": {"metadata_filename": "samples.jsonl", "rejected_filename": "rejected.jsonl", "stats_filename": "stats.json"},
-        "puzzles": {"persistent_bank_filename": "chess_bank.jsonl", "usage_stats_filename": "chess_usage.json"},
+        "puzzles": {"persistent_bank_filename": "chess_bank.jsonl", "usage_stats_filename": "chess_usage.json", "lineage_count": 16, "snapshots_per_lineage": 4, "catalog_version": "test-v2"},
         "similarity": {"ngram_overlap_threshold": 1.1, "embedding_similarity_threshold": 1.1, "structural_similarity_threshold": 1.1, "scenario_similarity_threshold": 1.1, "puzzle_similarity_threshold": 1.1},
         "scenario": {
             "task_categories": ["board_interpretation"],
@@ -132,6 +132,8 @@ def test_programmatic_bank_is_legal_deterministic_and_split_by_lineage(tmp_path)
 
     assert [(row.canonical_signature, row.solution) for row in first.base_bank] == [(row.canonical_signature, row.solution) for row in second.base_bank]
     assert len(first.base_bank) >= 64
+    assert {row.metadata["catalog_version"] for row in first.base_bank} == {"test-v2"}
+    assert all("complexity_score" in row.metadata and "position_phase" in row.metadata for row in first.base_bank)
     for record in first.base_bank:
         assert ChessToolkit().parse_fen(record.solution)["valid"] is True
         assert record.metadata["dataset_split"] == split_for_lineage(record.metadata["lineage_id"])
@@ -160,10 +162,10 @@ def test_adapter_records_purposeful_tools_state_trace_and_unavailable_engine(tmp
     usage = adapter.maybe_use_tool(selected_scenario, selected)
     names = [call["tool_name"] for call in usage["calls"]]
 
-    assert names == ["chess_parse_validate", "chess_engine_analysis", "chess_state_trace"]
-    assert usage["calls"][1]["output"]["available"] is False
+    assert names == ["chess_parse_validate", "chess_legal_moves", "chess_engine_analysis", "chess_state_trace"]
+    assert usage["calls"][2]["output"]["available"] is False
     assert usage["verification_status"] == "partial_unavailable"
-    trace = usage["calls"][2]["output"]["state_trace"]
+    trace = usage["calls"][3]["output"]["state_trace"]
     board = chess.Board(selected.ground_truth["current_fen"])
     for row in trace:
         assert row["fen_before"] == board.fen(en_passant="fen")
@@ -226,9 +228,102 @@ def test_end_to_end_chess_generation_preserves_schema_and_explicit_metadata(tmp_
     assert result["domain"] == "chess"
     assert sample["domain"] == "chess"
     assert sample["tool_usage_details"]["calls"]
-    for key in ("input_type", "conversation_type", "category", "difficulty", "side_to_move", "notation_format", "tools_required", "tools_used", "verification_status", "lineage_id", "dataset_split"):
+    for key in ("input_type", "conversation_type", "category", "difficulty", "side_to_move", "notation_format", "tools_required", "tools_used", "verification_status", "lineage_id", "dataset_split", "complexity_band", "tool_bundle_signature"):
         assert key in sample["metadata"]
+    assert sample["metadata"]["difficulty"] == complexity_band(sample["metadata"]["complexity_score"])
+    assert len(sample["metadata"]["tools_used"]) == len(set(sample["metadata"]["tools_used"]))
     with (tmp_path / "chess-job" / "single_turn.csv").open(newline="", encoding="utf-8") as handle:
         row = next(csv.DictReader(handle))
     assert row["domain"] == "chess"
     assert row["dataset_split"] in {"train", "validation", "test"}
+    assert int(row["tool_count"]) >= 2
+    assert row["tool_names"]
+
+
+def test_hundred_record_selection_audit_has_exact_quota_and_unique_states(tmp_path):
+    config = chess_config(tmp_path)
+    config["puzzles"]["lineage_count"] = 64
+    adapter = ChessDomainAdapter(config)
+    rows = []
+    for record_slot in range(100):
+        conversation_type = "multi_turn" if record_slot % 2 else "single_turn"
+        dataset_index = record_slot // 2
+        scenario_index = dataset_index * config["generation"]["max_regeneration_attempts"]
+        selected_scenario = adapter.generate_scenario(
+            sample_index=scenario_index,
+            conversation_type=conversation_type,
+            max_turns=6,
+            distribution_stats={},
+        )
+        selected = adapter.select_problem(selected_scenario, scenario_index)
+        rows.append((selected_scenario, selected))
+
+    assert len({puzzle.puzzle for _, puzzle in rows}) == 100
+    assert len({puzzle.metadata["canonical_state_signature"] for _, puzzle in rows}) == 100
+    assert sum(selected_scenario.edge_case != "none" for selected_scenario, _ in rows) == 15
+    assert {puzzle.difficulty for _, puzzle in rows} == {"easy", "medium", "hard", "expert"}
+    assert all(puzzle.difficulty == complexity_band(puzzle.metadata["complexity_score"]) for _, puzzle in rows)
+    assert {puzzle.metadata["input_type"] for _, puzzle in rows} >= {"fen", "game_history"}
+    rendered = {puzzle.rendered_board for _, puzzle in rows}
+    assert "Moves: 1. e4 e5 2. Ke3" not in rendered
+    assert "FEN: 8/8/8 broken" not in rendered
+    assert "FEN: 8/8/8/8/8/8/8/8 w - - 0 1" not in rendered
+    assert "Move fragment: Nf3\nPosition: unspecified" not in rendered
+
+
+def test_exhausted_catalog_extends_deterministically_without_reuse(tmp_path):
+    config = chess_config(tmp_path)
+    config["puzzles"]["lineage_count"] = 8
+    manager = ChessProblemManager(config)
+    original_count = len(manager.base_bank)
+    manager.reserved_states.update(
+        record.metadata["canonical_state_signature"] for record in manager.base_bank
+    )
+
+    selected = manager.select_puzzle(scenario(category="board_interpretation"), 0)
+
+    assert len(manager.base_bank) > original_count
+    assert selected.metadata["canonical_state_signature"] not in {
+        record.metadata["canonical_state_signature"] for record in manager.base_bank[:original_count]
+    }
+    assert sum(1 for _ in (tmp_path / "chess_bank.jsonl").open(encoding="utf-8")) == len(manager.base_bank)
+
+
+def test_every_category_routes_at_least_two_purposeful_tools(tmp_path):
+    adapter = ChessDomainAdapter(chess_config(tmp_path))
+    categories = [
+        "rules_explanation", "general_chat", "teaching", "notation_conversion", "legal_move_check",
+        "board_interpretation", "opening_guidance", "explain_previous_move", "tactical_puzzle", "hint",
+        "guided_solving", "positional_analysis", "endgame_analysis", "special_move", "draw_rules",
+        "terminal_state", "best_move", "move_comparison", "mistake_diagnosis", "continuation_speculation",
+        "opponent_response_prediction", "post_game_review",
+    ]
+    for index, category in enumerate(categories):
+        selected_scenario = scenario(category=category)
+        selected = adapter.select_problem(selected_scenario, index)
+        names = adapter._required_tools(selected_scenario, selected)
+        assert len(names) >= 2, category
+        assert len(names) == len(set(names)), category
+        if category in {"rules_explanation", "general_chat", "teaching", "opening_guidance", "positional_analysis"}:
+            assert "chess_engine_analysis" not in names
+
+
+def test_chess_normalizes_excess_model_turns_before_validation(tmp_path):
+    adapter = ChessDomainAdapter(chess_config(tmp_path))
+    selected_scenario = scenario(category="teaching", conversation_type="multi_turn")
+    selected_scenario.num_turns = 2
+    selected = adapter.select_problem(selected_scenario, 0)
+    output = {
+        "conversation_type": "multi_turn",
+        "category": "teaching",
+        "board": selected.rendered_board,
+        "messages": [
+            {"user": "one", "response": "one"},
+            {"user": "two", "response": "two"},
+            {"user": "three", "response": "three"},
+        ],
+    }
+
+    normalized = adapter.normalize_output(output, selected_scenario, selected)
+
+    assert len(normalized["messages"]) == 2
