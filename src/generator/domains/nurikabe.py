@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..domain_support import VariedDomainSupport, build_tool_usage, compact_tool_context
+from ..domain_support import VariedDomainSupport, build_tool_usage, compact_tool_context, make_tool_catalog
 from ..models import PuzzleRecord, Scenario, ValidationResult
-from ..nurikabe import NurikabePuzzleManager, parse_puzzle, validate_structure
+from ..nurikabe import NurikabePuzzleManager, parse_puzzle, solve_nurikabe, validate_structure
 from ..scenario import ScenarioGenerator
 
 
@@ -49,6 +49,13 @@ class NurikabeValidator:
 
 class NurikabeDomainAdapter(VariedDomainSupport):
     name = "nurikabe"
+    tool_catalog = make_tool_catalog(name, {
+        "nurikabe_deduction_scan": "Forced sea and island cells with a next move.", "nurikabe_constraint_validation": "Island, sea, structure, and solver validation.",
+        "nurikabe_solution_verification": "Complete solver-backed sea mask verification.", "nurikabe_rules_reference": "Canonical island and sea rules.", "nurikabe_puzzle_summary": "Grid size, clues, and difficulty.",
+        "nurikabe_island_capacity_analysis": "Maximum geometric reach and required size for each clue island.", "nurikabe_island_separation_scan": "Cells forced to sea between nearby clue islands.",
+        "nurikabe_sea_connectivity_analysis": "Connected-component statistics for the verified sea.", "nurikabe_two_by_two_risk_scan": "Potential 2x2 sea violations and forced island cells.",
+        "nurikabe_solution_space_analysis": "Capped solution count and ambiguous witness differences.",
+    })
     def __init__(self, config: dict[str, Any]):
         self.config, self.prompts = config, config.get("prompts", {})
         self.scenario_generator, self.puzzle_manager, self.validator = NurikabeScenarioGenerator(config), NurikabePuzzleManager(config), NurikabeValidator()
@@ -58,9 +65,7 @@ class NurikabeDomainAdapter(VariedDomainSupport):
     def mark_problem_used(self, puzzle: PuzzleRecord) -> None: self.puzzle_manager.mark_used(puzzle)
     def validate(self, output: dict[str, Any], scenario: Scenario, puzzle: PuzzleRecord) -> ValidationResult: return self.validator.validate(output, scenario, puzzle)
     def maybe_use_tool(self, scenario: Scenario, puzzle: PuzzleRecord) -> dict[str, Any]:
-        truth = puzzle.ground_truth
-        outputs = {"nurikabe_deduction_scan": {"forced_sea": truth.get("forced_sea", []), "forced_island": truth.get("forced_island", []), "suggested_move": truth.get("suggested_move")}, "nurikabe_constraint_validation": {"validity_status": truth.get("validity_status"), "solvability_status": truth.get("solvability_status"), "structural_violations": truth.get("structural_violations", []), "solution_violations": truth.get("solution_violations", [])}, "nurikabe_solution_verification": {"solution": truth.get("solution"), "solution_mask": truth.get("solution_mask"), "unique_solution_status": truth.get("unique_solution_status")}, "nurikabe_rules_reference": {"rules": ["Each island contains one clue and exactly its stated number of cells.", "The sea is connected, has no 2x2 block, and islands do not touch orthogonally."]}, "nurikabe_puzzle_summary": {"size": puzzle.metadata.get("size"), "clue_count": puzzle.num_clues, "difficulty": puzzle.difficulty}}
-        return build_tool_usage(scenario=scenario, puzzle=puzzle, tool_names=self._tool_bundle(scenario), input_for=lambda name: {"puzzle_id": puzzle.puzzle_id, "task_category": scenario.task_category, "edge_case": scenario.edge_case, "size": puzzle.metadata.get("size")}, output_for=lambda name: outputs[name])
+        return build_tool_usage(scenario=scenario, puzzle=puzzle, tool_names=self._tool_bundle(scenario), input_for=lambda name: {"puzzle_id": puzzle.puzzle_id, "task_category": scenario.task_category, "edge_case": scenario.edge_case, "size": puzzle.metadata.get("size")}, output_for=lambda name: self._run_tool(name, puzzle))
     def prompt_problem(self, puzzle: PuzzleRecord) -> dict[str, Any]: return {"puzzle_id": puzzle.puzzle_id, "size": puzzle.metadata.get("size"), "difficulty": puzzle.difficulty, "required_strategies": puzzle.required_strategies, "transformation": puzzle.transformation}
     def prompt_ground_truth(self, puzzle: PuzzleRecord) -> dict[str, Any]:
         truth = puzzle.ground_truth
@@ -72,11 +77,14 @@ class NurikabeDomainAdapter(VariedDomainSupport):
     def flatten_sample_row(self, row: dict[str, Any], sample: dict[str, Any]) -> dict[str, Any]:
         metadata = sample.get("puzzle_metadata", {}).get("metadata", {}); row.update({"domain": sample.get("domain", self.name), "grid_size": metadata.get("size"), "clues": metadata.get("clues", []), "tool_used": sample.get("tool_used", False), "tool_name": sample.get("tool_usage_details", {}).get("tool_name")}); self._add_flat_tool_metadata(row, sample); return row
     def _tool_bundle(self, scenario: Scenario) -> list[str]:
-        if scenario.task_category in {"rules_explanation", "beginner_question", "general_chat"}: return ["nurikabe_rules_reference", "nurikabe_puzzle_summary"]
+        if scenario.edge_case == "malformed_input": return ["nurikabe_constraint_validation", "nurikabe_puzzle_summary", "nurikabe_rules_reference"]
+        if scenario.edge_case in {"invalid_grid", "unsolvable_puzzle", "ambiguous_puzzle"}: return ["nurikabe_constraint_validation", "nurikabe_solution_space_analysis", "nurikabe_sea_connectivity_analysis"]
+        if scenario.task_category in {"rules_explanation", "beginner_question", "general_chat"}: return ["nurikabe_rules_reference", "nurikabe_puzzle_summary", "nurikabe_island_capacity_analysis"]
+        if scenario.task_category in {"technique_discussion", "advanced_question"}: return ["nurikabe_island_capacity_analysis", "nurikabe_island_separation_scan", "nurikabe_sea_connectivity_analysis", "nurikabe_two_by_two_risk_scan"]
         primary = self._tool_name(scenario)
-        if primary == "nurikabe_solution_verification": return ["nurikabe_deduction_scan", primary]
-        if primary == "nurikabe_deduction_scan": return [primary, "nurikabe_constraint_validation"]
-        if primary == "nurikabe_constraint_validation": return [primary, "nurikabe_deduction_scan"]
+        if primary == "nurikabe_solution_verification": return ["nurikabe_deduction_scan", "nurikabe_sea_connectivity_analysis", "nurikabe_solution_space_analysis", primary]
+        if primary == "nurikabe_deduction_scan": return [primary, "nurikabe_island_separation_scan", "nurikabe_two_by_two_risk_scan"]
+        if primary == "nurikabe_constraint_validation": return [primary, "nurikabe_sea_connectivity_analysis", "nurikabe_solution_space_analysis"]
         return [primary or "nurikabe_puzzle_summary", "nurikabe_constraint_validation"]
     @staticmethod
     def _tool_name(scenario: Scenario) -> str | None:
@@ -84,3 +92,52 @@ class NurikabeDomainAdapter(VariedDomainSupport):
         if scenario.tool_usage == "deduction_scan" or scenario.task_category in {"hint", "next_best_move", "island_analysis"}: return "nurikabe_deduction_scan"
         if scenario.tool_usage == "solution_verification" or scenario.task_category == "solve_puzzle": return "nurikabe_solution_verification"
         return None
+
+    def _run_tool(self, name: str, puzzle: PuzzleRecord) -> dict[str, Any]:
+        truth = puzzle.ground_truth; size, clues = parse_puzzle(puzzle.puzzle)
+        if name == "nurikabe_deduction_scan": return {"forced_sea": truth.get("forced_sea", []), "forced_island": truth.get("forced_island", []), "suggested_move": truth.get("suggested_move")}
+        if name == "nurikabe_constraint_validation": return {"validity_status": truth.get("validity_status"), "solvability_status": truth.get("solvability_status"), "structural_violations": truth.get("structural_violations", []), "solution_violations": truth.get("solution_violations", [])}
+        if name == "nurikabe_solution_verification": return {"solution": truth.get("solution"), "solution_mask": truth.get("solution_mask"), "unique_solution_status": truth.get("unique_solution_status")}
+        if name == "nurikabe_rules_reference": return {"rules": ["Each island contains one clue and exactly its stated number of cells.", "The sea is connected, has no 2x2 block, and islands do not touch orthogonally."]}
+        if name == "nurikabe_puzzle_summary": return {"size": size, "clue_count": puzzle.num_clues, "difficulty": puzzle.difficulty}
+        clue_cells = [(r, c, clues[r][c]) for r in range(size) for c in range(size) if clues[r][c]]
+        if name == "nurikabe_island_capacity_analysis": return {"islands": [{"clue_cell": f"r{r + 1}c{c + 1}", "required_size": value, "geometric_reach": sum(1 for rr in range(size) for cc in range(size) if abs(rr-r)+abs(cc-c) < value)} for r, c, value in clue_cells]}
+        if name == "nurikabe_island_separation_scan": return {"forced_sea_between_clues": self._separators(clue_cells)}
+        if name == "nurikabe_sea_connectivity_analysis": return self._sea_connectivity(truth.get("solution_mask") or [], size)
+        if name == "nurikabe_two_by_two_risk_scan": return {"forced_island_to_avoid_2x2": self._two_by_two(size, truth.get("forced_sea", []))}
+        if name == "nurikabe_solution_space_analysis":
+            solutions = solve_nurikabe(size, clues, limit=2) if not validate_structure(size, clues) else []
+            differences = [f"r{r + 1}c{c + 1}" for r in range(size) for c in range(size) if len(solutions) > 1 and solutions[0][r][c] != solutions[1][r][c]]
+            return {"solution_count_capped": len(solutions), "cap": 2, "status": truth.get("solvability_status"), "witness_differences": differences}
+        return {}
+
+    @staticmethod
+    def _separators(clues: list[tuple[int, int, int]]) -> list[str]:
+        result = set()
+        for r1, c1, _ in clues:
+            for r2, c2, _ in clues:
+                if r1 == r2 and abs(c1-c2) == 2: result.add(f"r{r1 + 1}c{(c1+c2)//2 + 1}")
+                if c1 == c2 and abs(r1-r2) == 2: result.add(f"r{(r1+r2)//2 + 1}c{c1 + 1}")
+        return sorted(result)
+
+    @staticmethod
+    def _sea_connectivity(mask: list[list[int]], size: int) -> dict[str, Any]:
+        sea = {(r, c) for r in range(size) for c in range(size) if mask and mask[r][c]}; components = []
+        while sea:
+            stack = [sea.pop()]; count = 0
+            while stack:
+                r, c = stack.pop(); count += 1
+                for neighbor in ((r-1,c),(r+1,c),(r,c-1),(r,c+1)):
+                    if neighbor in sea: sea.remove(neighbor); stack.append(neighbor)
+            components.append(count)
+        return {"component_count": len(components), "component_sizes": sorted(components, reverse=True), "connected": len(components) == 1}
+
+    @staticmethod
+    def _two_by_two(size: int, forced_sea: list[str]) -> list[str]:
+        sea = set(forced_sea); forced = set()
+        for r in range(size-1):
+            for c in range(size-1):
+                cells = {f"r{rr + 1}c{cc + 1}" for rr, cc in ((r,c),(r+1,c),(r,c+1),(r+1,c+1))}
+                missing = cells - sea
+                if len(missing) == 1: forced.update(missing)
+        return sorted(forced)

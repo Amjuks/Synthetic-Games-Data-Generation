@@ -7,6 +7,7 @@ from typing import Any
 import chess
 
 from ..chess import ChessProblemManager, ChessToolkit, complexity_band
+from ..domain_support import make_tool_catalog, validate_tool_catalog
 from ..models import PuzzleRecord, Scenario, ValidationResult
 from ..scenario import ScenarioGenerator
 
@@ -251,6 +252,25 @@ class ChessValidator:
 
 class ChessDomainAdapter:
     name = "chess"
+    tool_catalog = make_tool_catalog(name, {
+        "chess_parse_validate": "Parse and validate FEN, PGN, or move-history input.", "chess_reconstruct_position": "Reconstruct a verified position from game history.",
+        "chess_rules_reference": "Canonical rules relevant to the requested theme.", "chess_legal_example": "A verified legal move example with before/after state.",
+        "chess_input_diagnosis": "Diagnose malformed, incomplete, contradictory, or invalid input.", "chess_legal_alternatives": "Legal alternatives at the first failed move.",
+        "chess_legal_moves": "Complete legal move list for the position.", "chess_move_validation": "Legality and notation validation for a move.",
+        "chess_position_summary": "Side to move, check state, phase, and legal-move count.", "chess_material_analysis": "Material inventory and available captures.",
+        "chess_positional_features": "Development, pawn, castling, and space features.", "chess_tactical_inspection": "Checks, captures, threats, pins, forks, and related tactics.",
+        "chess_position_status": "Terminal, draw, check, and game-state status.", "chess_repetition_history": "History-aware repetition and draw evidence.",
+        "chess_move_conversion": "Verified SAN/UCI notation conversion.", "chess_move_application": "Apply a legal move and return the new position.",
+        "chess_move_undo": "Undo verified move history.", "chess_engine_analysis": "Stockfish-backed evaluation and principal variations.",
+        "chess_tablebase_lookup": "Syzygy-backed exact endgame result.", "chess_state_trace": "Legal before/after position trace across multiple plies.",
+    })
+
+    @classmethod
+    def catalog_route_names(cls) -> set[str]:
+        # Chess routing also depends on puzzle input type, piece count, edge
+        # mutation, and conversation length. This declaration is the union of
+        # those deterministic branches in _required_tools.
+        return set(cls.tool_catalog)
 
     def __init__(self, config: dict[str, Any]):
         self.config = config
@@ -260,6 +280,7 @@ class ChessDomainAdapter:
         self.toolkit: ChessToolkit = self.puzzle_manager.toolkit
         self.validator = ChessValidator()
         self.require_verification_backends = bool(config.get("chess", {}).get("verification_backends_required", True))
+        validate_tool_catalog(self)
 
     def prepare_job(self, *, job_dir: Any, accepted_history: list[dict[str, Any]], rejected_history: list[dict[str, Any]]) -> None:
         self.puzzle_manager.reserve_history([*accepted_history, *rejected_history])

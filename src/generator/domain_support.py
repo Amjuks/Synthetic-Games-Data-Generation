@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import math
+from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Callable, Iterable
 
 from .models import PuzzleRecord, Scenario
@@ -13,6 +15,75 @@ DIFFICULTY_BOUNDS = {
     "hard": (45, 64),
     "expert": (65, 100),
 }
+
+PUZZLE_ROUTE_CATEGORIES = {
+    "next_best_move", "validity_check", "rules_explanation", "solve_puzzle",
+    "hint", "mistake_correction", "technique_discussion", "beginner_question",
+    "advanced_question", "general_chat", "solve_row_column_box", "cage_analysis",
+    "run_analysis", "region_analysis", "clue_analysis", "duplicate_analysis",
+    "island_analysis",
+}
+PUZZLE_ROUTE_EDGES = {
+    "none", "incorrect_assumption", "malformed_input", "invalid_board",
+    "unsolvable_board", "ambiguous_board", "invalid_cages", "invalid_clues",
+    "invalid_regions", "invalid_grid", "unsolvable_puzzle", "ambiguous_puzzle",
+}
+PUZZLE_ROUTE_MODES = {
+    "none", "candidate_scan", "row_column_box_check", "solution_verification",
+    "cage_candidate_scan", "cage_constraint_check", "run_candidate_scan",
+    "sum_constraint_check", "constraint_check", "line_candidate_scan",
+    "duplicate_scan", "deduction_scan",
+}
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    """Inspectable contract for a deterministic domain tool."""
+
+    name: str
+    description: str
+    task_categories: tuple[str, ...] = ("*",)
+    edge_cases: tuple[str, ...] = ("*",)
+    output_purpose: str = "verified puzzle evidence"
+    executor: str = "_run_tool"
+
+
+def make_tool_catalog(domain: str, descriptions: dict[str, str]) -> dict[str, ToolSpec]:
+    return {
+        name: ToolSpec(
+            name=name,
+            description=description,
+            output_purpose=description,
+        )
+        for name, description in descriptions.items()
+    }
+
+
+def validate_tool_catalog(adapter: Any) -> None:
+    catalog = getattr(adapter, "tool_catalog", None)
+    if not isinstance(catalog, dict):
+        raise ValueError(f"{adapter.name} adapter must expose a tool_catalog mapping")
+    minimum = int(adapter.config.get("puzzles", {}).get("min_tool_catalog_size", 10))
+    if len(catalog) < minimum:
+        raise ValueError(f"{adapter.name} tool catalog has {len(catalog)} tools; at least {minimum} are required")
+    if len(catalog) != len(set(catalog)):
+        raise ValueError(f"{adapter.name} tool catalog contains duplicate names")
+    prefix = f"{adapter.name}_"
+    for name, spec in catalog.items():
+        if name != spec.name or not name.startswith(prefix):
+            raise ValueError(f"invalid {adapter.name} tool catalog entry: {name}")
+        if not spec.description.strip() or not spec.output_purpose.strip():
+            raise ValueError(f"tool {name} requires a description and output purpose")
+        executor = getattr(adapter, spec.executor, None)
+        if not callable(executor):
+            raise ValueError(f"tool {name} has no callable executor {spec.executor}")
+    route_names = set(adapter.catalog_route_names())
+    unknown = route_names - set(catalog)
+    unreachable = set(catalog) - route_names
+    if unknown:
+        raise ValueError(f"{adapter.name} routes unregistered tools: {', '.join(sorted(unknown))}")
+    if unreachable:
+        raise ValueError(f"{adapter.name} catalog has unreachable tools: {', '.join(sorted(unreachable))}")
 
 
 def add_complexity_metadata(puzzle: PuzzleRecord) -> None:
@@ -105,6 +176,30 @@ class VariedDomainSupport:
 
     def _initialize_variety_support(self) -> None:
         self._reserved_puzzle_ids: set[str] = set()
+        validate_tool_catalog(self)
+
+    def catalog_route_names(self) -> set[str]:
+        """Enumerate the supported route universe without selecting or solving a puzzle.
+
+        Runtime configuration may intentionally narrow generation to one task or
+        mode; that must not make the adapter's other registered capabilities
+        invalid or prevent construction.
+        """
+        scenario_config = self.config.get("scenario", {})
+        categories = PUZZLE_ROUTE_CATEGORIES | set(scenario_config.get("task_categories", []))
+        edges = PUZZLE_ROUTE_EDGES | set(scenario_config.get("edge_cases", ["none"]))
+        modes = PUZZLE_ROUTE_MODES | set(scenario_config.get("tool_usage_modes", ["none"]))
+        routed: set[str] = set()
+        for category in categories:
+            for edge_case in edges:
+                for tool_usage in modes:
+                    scenario = SimpleNamespace(
+                        task_category=category,
+                        edge_case=edge_case,
+                        tool_usage=tool_usage,
+                    )
+                    routed.update(self._tool_bundle(scenario))
+        return routed
 
     def prepare_job(self, *, job_dir: Any, accepted_history: list[dict[str, Any]], rejected_history: list[dict[str, Any]]) -> None:
         del job_dir
@@ -155,6 +250,9 @@ class VariedDomainSupport:
             errors.append("recorded tool call count does not match tools_used")
         if any(not call.get("output", {}).get("verified", False) for call in calls):
             errors.append("every tool call must be verified")
+        unknown = [name for name in used if name not in self.tool_catalog]
+        if unknown:
+            errors.append(f"tool bundle contains unregistered tools: {', '.join(unknown)}")
         if puzzle.metadata.get("complexity_band") != puzzle.difficulty:
             errors.append("complexity band does not match puzzle difficulty")
         return errors

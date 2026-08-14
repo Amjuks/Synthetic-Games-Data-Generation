@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..domain_support import VariedDomainSupport, build_tool_usage
+from ..domain_support import VariedDomainSupport, build_tool_usage, make_tool_catalog
 from ..models import PuzzleRecord, Scenario, ValidationResult
 from ..scenario import ScenarioGenerator
-from ..starbattle import StarBattlePuzzleManager, parse_puzzle, validate_structure
+from ..starbattle import StarBattlePuzzleManager, parse_cell, parse_puzzle, solve_starbattle, validate_structure
 
 
 class StarBattleScenarioGenerator(ScenarioGenerator):
@@ -104,6 +104,13 @@ class StarBattleValidator:
 
 class StarBattleDomainAdapter(VariedDomainSupport):
     name = "starbattle"
+    tool_catalog = make_tool_catalog(name, {
+        "starbattle_candidate_analysis": "Forced stars, forced empty cells, and a deduction.", "starbattle_constraint_validation": "Region, quota, adjacency, structure, and solver validation.",
+        "starbattle_solution_verification": "Complete solver-backed star-grid verification.", "starbattle_rules_reference": "Canonical quota and non-touching rules.", "starbattle_puzzle_summary": "Size, star quota, regions, and difficulty.",
+        "starbattle_row_quota_analysis": "Forced and available star capacity for every row.", "starbattle_column_quota_analysis": "Forced and available star capacity for every column.",
+        "starbattle_region_quota_analysis": "Forced and available star capacity for every region.", "starbattle_adjacency_exclusion_scan": "Cells excluded by forced stars, including diagonals.",
+        "starbattle_solution_space_analysis": "Capped solution count and ambiguous witness differences.",
+    })
 
     def __init__(self, config: dict[str, Any]):
         self.config = config
@@ -222,11 +229,14 @@ class StarBattleDomainAdapter(VariedDomainSupport):
         return row
 
     def _tool_bundle(self, scenario: Scenario) -> list[str]:
-        if scenario.task_category in {"rules_explanation", "beginner_question", "general_chat"}: return ["starbattle_rules_reference", "starbattle_puzzle_summary"]
+        if scenario.edge_case == "malformed_input": return ["starbattle_constraint_validation", "starbattle_puzzle_summary", "starbattle_rules_reference"]
+        if scenario.edge_case in {"invalid_regions", "unsolvable_puzzle", "ambiguous_puzzle"}: return ["starbattle_constraint_validation", "starbattle_region_quota_analysis", "starbattle_solution_space_analysis"]
+        if scenario.task_category in {"rules_explanation", "beginner_question", "general_chat"}: return ["starbattle_rules_reference", "starbattle_puzzle_summary", "starbattle_region_quota_analysis"]
+        if scenario.task_category in {"technique_discussion", "advanced_question"}: return ["starbattle_row_quota_analysis", "starbattle_column_quota_analysis", "starbattle_region_quota_analysis", "starbattle_adjacency_exclusion_scan"]
         primary = self._tool_name_for_scenario(scenario)
-        if primary == "starbattle_solution_verification": return ["starbattle_candidate_analysis", primary]
-        if primary == "starbattle_candidate_analysis": return [primary, "starbattle_constraint_validation"]
-        if primary == "starbattle_constraint_validation": return [primary, "starbattle_candidate_analysis"]
+        if primary == "starbattle_solution_verification": return ["starbattle_candidate_analysis", "starbattle_region_quota_analysis", "starbattle_solution_space_analysis", primary]
+        if primary == "starbattle_candidate_analysis": return [primary, "starbattle_row_quota_analysis", "starbattle_column_quota_analysis", "starbattle_adjacency_exclusion_scan"]
+        if primary == "starbattle_constraint_validation": return [primary, "starbattle_region_quota_analysis", "starbattle_solution_space_analysis"]
         return [primary or "starbattle_puzzle_summary", "starbattle_constraint_validation"]
 
     def _tool_name_for_scenario(self, scenario: Scenario) -> str | None:
@@ -271,7 +281,32 @@ class StarBattleDomainAdapter(VariedDomainSupport):
             }
         if tool_name == "starbattle_rules_reference": return {"rules": ["Place the required stars in every row, column, and region.", "Stars cannot touch, including diagonally."]}
         if tool_name == "starbattle_puzzle_summary": return {"size": puzzle.metadata.get("size"), "stars_per_unit": puzzle.metadata.get("stars_per_unit"), "region_count": len(puzzle.metadata.get("regions", [])), "difficulty": puzzle.difficulty}
+        size, stars, regions = parse_puzzle(puzzle.puzzle); forced_stars = set(truth.get("forced_stars", [])); forced_empty = set(truth.get("forced_empty", []))
+        if tool_name == "starbattle_row_quota_analysis": return {"rows": [self._quota(f"row_{r + 1}", [f"r{r + 1}c{c + 1}" for c in range(size)], stars, forced_stars, forced_empty) for r in range(size)]}
+        if tool_name == "starbattle_column_quota_analysis": return {"columns": [self._quota(f"column_{c + 1}", [f"r{r + 1}c{c + 1}" for r in range(size)], stars, forced_stars, forced_empty) for c in range(size)]}
+        if tool_name == "starbattle_region_quota_analysis": return {"regions": [self._quota(f"region_{region['id']}", region["cells"], stars, forced_stars, forced_empty) for region in regions]}
+        if tool_name == "starbattle_adjacency_exclusion_scan": return {"excluded_by_adjacency": self._adjacency_exclusions(size, forced_stars)}
+        if tool_name == "starbattle_solution_space_analysis":
+            solutions = solve_starbattle(size, stars, regions, limit=2) if not validate_structure(size, stars, regions) else []
+            differences = [f"r{r + 1}c{c + 1}" for r in range(size) for c in range(size) if len(solutions) > 1 and solutions[0][r][c] != solutions[1][r][c]]
+            return {"solution_count_capped": len(solutions), "cap": 2, "status": truth.get("solvability_status"), "witness_differences": differences}
         return {}
+
+    @staticmethod
+    def _quota(unit: str, cells: list[str], required: int, forced_stars: set[str], forced_empty: set[str]) -> dict[str, Any]:
+        placed = len(set(cells) & forced_stars); available = sorted(set(cells) - forced_empty - forced_stars)
+        return {"unit": unit, "required": required, "forced_star_count": placed, "remaining_stars": max(0, required - placed), "available_cells": available, "capacity_ok": placed + len(available) >= required}
+
+    @staticmethod
+    def _adjacency_exclusions(size: int, stars: set[str]) -> list[dict[str, str]]:
+        result: dict[str, str] = {}
+        for star in stars:
+            row, col = parse_cell(star)
+            for rr in range(max(0, row-1), min(size, row+2)):
+                for cc in range(max(0, col-1), min(size, col+2)):
+                    cell = f"r{rr + 1}c{cc + 1}"
+                    if cell != star: result[cell] = star
+        return [{"cell": cell, "excluded_by": result[cell]} for cell in sorted(result)]
 
     def _tool_reason(self, tool_name: str, scenario: Scenario) -> str:
         reasons = {

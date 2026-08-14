@@ -25,6 +25,7 @@ defaults:
     persistent_bank_filename: puzzle_bank.jsonl
     usage_stats_filename: puzzle_usage.json
     min_tools_per_sample: 2
+    min_tool_catalog_size: 10
   similarity:
     max_history: 5000
     ngram_size: 3

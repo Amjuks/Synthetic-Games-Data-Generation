@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..domain_support import VariedDomainSupport, build_tool_usage, compact_tool_context
-from ..hitori import HitoriPuzzleManager, parse_puzzle, validate_structure
+from ..domain_support import VariedDomainSupport, build_tool_usage, compact_tool_context, make_tool_catalog
+from ..hitori import HitoriPuzzleManager, parse_puzzle, solve_hitori, validate_structure
 from ..models import PuzzleRecord, Scenario, ValidationResult
 from ..scenario import ScenarioGenerator
 
@@ -51,6 +51,13 @@ class HitoriValidator:
 
 class HitoriDomainAdapter(VariedDomainSupport):
     name = "hitori"
+    tool_catalog = make_tool_catalog(name, {
+        "hitori_duplicate_analysis": "Forced shaded and unshaded cells from duplicate constraints.", "hitori_constraint_validation": "Grid, adjacency, connectivity, and solver validation.",
+        "hitori_solution_verification": "Complete solver-backed shading verification.", "hitori_rules_reference": "Canonical Hitori rules.", "hitori_puzzle_summary": "Grid dimensions and difficulty.",
+        "hitori_row_duplicate_groups": "Repeated-value groups in each row.", "hitori_column_duplicate_groups": "Repeated-value groups in each column.",
+        "hitori_adjacency_risk_analysis": "Cells that must remain unshaded around forced shaded cells.", "hitori_connectivity_analysis": "Connectivity statistics for the unshaded solution graph.",
+        "hitori_solution_space_analysis": "Capped solution count and ambiguous witness differences.",
+    })
     def __init__(self, config: dict[str, Any]):
         self.config, self.prompts = config, config.get("prompts", {})
         self.scenario_generator, self.puzzle_manager, self.validator = HitoriScenarioGenerator(config), HitoriPuzzleManager(config), HitoriValidator()
@@ -60,9 +67,7 @@ class HitoriDomainAdapter(VariedDomainSupport):
     def mark_problem_used(self, puzzle: PuzzleRecord) -> None: self.puzzle_manager.mark_used(puzzle)
     def validate(self, output: dict[str, Any], scenario: Scenario, puzzle: PuzzleRecord) -> ValidationResult: return self.validator.validate(output, scenario, puzzle)
     def maybe_use_tool(self, scenario: Scenario, puzzle: PuzzleRecord) -> dict[str, Any]:
-        truth = puzzle.ground_truth
-        outputs = {"hitori_duplicate_analysis": {"forced_shaded": truth.get("forced_shaded", []), "forced_unshaded": truth.get("forced_unshaded", []), "suggested_move": truth.get("suggested_move")}, "hitori_constraint_validation": {"validity_status": truth.get("validity_status"), "solvability_status": truth.get("solvability_status"), "structural_violations": truth.get("structural_violations", []), "solution_violations": truth.get("solution_violations", [])}, "hitori_solution_verification": {"solution": truth.get("solution"), "solution_mask": truth.get("solution_mask"), "unique_solution_status": truth.get("unique_solution_status")}, "hitori_rules_reference": {"rules": ["Unshaded values are unique in each row and column.", "Shaded cells do not touch orthogonally and unshaded cells stay connected."]}, "hitori_puzzle_summary": {"size": puzzle.metadata.get("size"), "cell_count": puzzle.num_clues, "difficulty": puzzle.difficulty}}
-        return build_tool_usage(scenario=scenario, puzzle=puzzle, tool_names=self._tool_bundle(scenario), input_for=lambda name: {"puzzle_id": puzzle.puzzle_id, "task_category": scenario.task_category, "edge_case": scenario.edge_case, "size": puzzle.metadata.get("size")}, output_for=lambda name: outputs[name])
+        return build_tool_usage(scenario=scenario, puzzle=puzzle, tool_names=self._tool_bundle(scenario), input_for=lambda name: {"puzzle_id": puzzle.puzzle_id, "task_category": scenario.task_category, "edge_case": scenario.edge_case, "size": puzzle.metadata.get("size")}, output_for=lambda name: self._run_tool(name, puzzle))
     def prompt_problem(self, puzzle: PuzzleRecord) -> dict[str, Any]: return {"puzzle_id": puzzle.puzzle_id, "size": puzzle.metadata.get("size"), "difficulty": puzzle.difficulty, "required_strategies": puzzle.required_strategies, "transformation": puzzle.transformation}
     def prompt_ground_truth(self, puzzle: PuzzleRecord) -> dict[str, Any]:
         truth = puzzle.ground_truth
@@ -74,11 +79,14 @@ class HitoriDomainAdapter(VariedDomainSupport):
     def flatten_sample_row(self, row: dict[str, Any], sample: dict[str, Any]) -> dict[str, Any]:
         metadata = sample.get("puzzle_metadata", {}).get("metadata", {}); row.update({"domain": sample.get("domain", self.name), "grid_size": metadata.get("size"), "grid": metadata.get("grid", []), "tool_used": sample.get("tool_used", False), "tool_name": sample.get("tool_usage_details", {}).get("tool_name")}); self._add_flat_tool_metadata(row, sample); return row
     def _tool_bundle(self, scenario: Scenario) -> list[str]:
-        if scenario.task_category in {"rules_explanation", "beginner_question", "general_chat"}: return ["hitori_rules_reference", "hitori_puzzle_summary"]
+        if scenario.edge_case == "malformed_input": return ["hitori_constraint_validation", "hitori_puzzle_summary", "hitori_rules_reference"]
+        if scenario.edge_case in {"invalid_grid", "unsolvable_puzzle", "ambiguous_puzzle"}: return ["hitori_constraint_validation", "hitori_solution_space_analysis", "hitori_connectivity_analysis"]
+        if scenario.task_category in {"rules_explanation", "beginner_question", "general_chat"}: return ["hitori_rules_reference", "hitori_puzzle_summary", "hitori_row_duplicate_groups"]
+        if scenario.task_category in {"technique_discussion", "advanced_question"}: return ["hitori_row_duplicate_groups", "hitori_column_duplicate_groups", "hitori_adjacency_risk_analysis", "hitori_connectivity_analysis"]
         primary = self._tool_name(scenario)
-        if primary == "hitori_solution_verification": return ["hitori_duplicate_analysis", primary]
-        if primary == "hitori_duplicate_analysis": return [primary, "hitori_constraint_validation"]
-        if primary == "hitori_constraint_validation": return [primary, "hitori_duplicate_analysis"]
+        if primary == "hitori_solution_verification": return ["hitori_duplicate_analysis", "hitori_connectivity_analysis", "hitori_solution_space_analysis", primary]
+        if primary == "hitori_duplicate_analysis": return [primary, "hitori_row_duplicate_groups", "hitori_column_duplicate_groups", "hitori_adjacency_risk_analysis"]
+        if primary == "hitori_constraint_validation": return [primary, "hitori_connectivity_analysis", "hitori_solution_space_analysis"]
         return [primary or "hitori_puzzle_summary", "hitori_constraint_validation"]
     @staticmethod
     def _tool_name(scenario: Scenario) -> str | None:
@@ -86,3 +94,52 @@ class HitoriDomainAdapter(VariedDomainSupport):
         if scenario.tool_usage == "duplicate_scan" or scenario.task_category in {"hint", "next_best_move", "duplicate_analysis"}: return "hitori_duplicate_analysis"
         if scenario.tool_usage == "solution_verification" or scenario.task_category == "solve_puzzle": return "hitori_solution_verification"
         return None
+
+    def _run_tool(self, name: str, puzzle: PuzzleRecord) -> dict[str, Any]:
+        truth = puzzle.ground_truth; size, grid = parse_puzzle(puzzle.puzzle)
+        if name == "hitori_duplicate_analysis": return {"forced_shaded": truth.get("forced_shaded", []), "forced_unshaded": truth.get("forced_unshaded", []), "suggested_move": truth.get("suggested_move")}
+        if name == "hitori_constraint_validation": return {"validity_status": truth.get("validity_status"), "solvability_status": truth.get("solvability_status"), "structural_violations": truth.get("structural_violations", []), "solution_violations": truth.get("solution_violations", [])}
+        if name == "hitori_solution_verification": return {"solution": truth.get("solution"), "solution_mask": truth.get("solution_mask"), "unique_solution_status": truth.get("unique_solution_status")}
+        if name == "hitori_rules_reference": return {"rules": ["Unshaded values are unique in each row and column.", "Shaded cells do not touch orthogonally and unshaded cells stay connected."]}
+        if name == "hitori_puzzle_summary": return {"size": size, "cell_count": puzzle.num_clues, "difficulty": puzzle.difficulty}
+        if name == "hitori_row_duplicate_groups": return {"groups": self._duplicates(grid, by_row=True)}
+        if name == "hitori_column_duplicate_groups": return {"groups": self._duplicates(grid, by_row=False)}
+        if name == "hitori_adjacency_risk_analysis": return {"must_remain_unshaded": self._adjacent_cells(size, truth.get("forced_shaded", []))}
+        if name == "hitori_connectivity_analysis": return self._connectivity(truth.get("solution_mask") or [], size)
+        if name == "hitori_solution_space_analysis":
+            solutions = solve_hitori(size, grid, limit=2) if not validate_structure(size, grid) else []
+            differences = [f"r{r + 1}c{c + 1}" for r in range(size) for c in range(size) if len(solutions) > 1 and solutions[0][r][c] != solutions[1][r][c]]
+            return {"solution_count_capped": len(solutions), "cap": 2, "status": truth.get("solvability_status"), "witness_differences": differences}
+        return {}
+
+    @staticmethod
+    def _duplicates(grid: list[list[int]], *, by_row: bool) -> list[dict[str, Any]]:
+        size = len(grid); groups = []
+        for unit in range(size):
+            values: dict[int, list[str]] = {}
+            for offset in range(size):
+                row, col = (unit, offset) if by_row else (offset, unit)
+                values.setdefault(grid[row][col], []).append(f"r{row + 1}c{col + 1}")
+            groups.extend({"value": value, "cells": cells, "unit": f"{'row' if by_row else 'column'}_{unit + 1}"} for value, cells in values.items() if len(cells) > 1)
+        return groups
+
+    @staticmethod
+    def _adjacent_cells(size: int, shaded: list[str]) -> list[str]:
+        cells = set()
+        for cell in shaded:
+            row, col = (int(part) - 1 for part in cell[1:].split("c"))
+            for nr, nc in ((row - 1, col), (row + 1, col), (row, col - 1), (row, col + 1)):
+                if 0 <= nr < size and 0 <= nc < size: cells.add(f"r{nr + 1}c{nc + 1}")
+        return sorted(cells - set(shaded))
+
+    @staticmethod
+    def _connectivity(mask: list[list[int]], size: int) -> dict[str, Any]:
+        open_cells = {(r, c) for r in range(size) for c in range(size) if mask and not mask[r][c]}; components = []
+        while open_cells:
+            stack = [open_cells.pop()]; count = 0
+            while stack:
+                r, c = stack.pop(); count += 1
+                for neighbor in ((r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)):
+                    if neighbor in open_cells: open_cells.remove(neighbor); stack.append(neighbor)
+            components.append(count)
+        return {"component_count": len(components), "component_sizes": sorted(components, reverse=True), "connected": len(components) == 1}

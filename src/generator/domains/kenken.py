@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..domain_support import VariedDomainSupport, build_tool_usage
-from ..kenken import KenKenPuzzleManager, parse_puzzle, validate_structure
+from ..domain_support import VariedDomainSupport, build_tool_usage, make_tool_catalog
+from ..kenken import KenKenPuzzleManager, parse_cell, parse_puzzle, solve_kenken, validate_structure
 from ..models import PuzzleRecord, Scenario, ValidationResult
 from ..scenario import ScenarioGenerator
 
@@ -92,6 +92,13 @@ class KenKenValidator:
 
 class KenKenDomainAdapter(VariedDomainSupport):
     name = "kenken"
+    tool_catalog = make_tool_catalog(name, {
+        "kenken_cage_analysis": "Candidate tuples, forced values, and a cage deduction.", "kenken_constraint_validation": "Cage structure, arithmetic, and Latin-square validation.",
+        "kenken_solution_verification": "Complete solver-backed Latin grid verification.", "kenken_rules_reference": "Canonical row, column, and cage rules.", "kenken_puzzle_summary": "Size, cages, difficulty, and strategies.",
+        "kenken_latin_unit_analysis": "Forced values and remaining digits in each row and column.", "kenken_cage_feasibility": "Candidate counts and feasibility for every cage.",
+        "kenken_cage_intersection_analysis": "Per-cell values surviving cage and Latin-unit intersections.", "kenken_move_impact_analysis": "Candidate eliminations caused by the suggested value.",
+        "kenken_solution_space_analysis": "Capped solution count and ambiguous witness differences.",
+    })
 
     def __init__(self, config: dict[str, Any]):
         self.config = config
@@ -275,11 +282,14 @@ class KenKenDomainAdapter(VariedDomainSupport):
         return row
 
     def _tool_bundle(self, scenario: Scenario) -> list[str]:
-        if scenario.task_category in {"rules_explanation", "beginner_question", "general_chat"}: return ["kenken_rules_reference", "kenken_puzzle_summary"]
+        if scenario.edge_case == "malformed_input": return ["kenken_constraint_validation", "kenken_puzzle_summary", "kenken_rules_reference"]
+        if scenario.edge_case in {"invalid_cages", "unsolvable_puzzle", "ambiguous_puzzle"}: return ["kenken_constraint_validation", "kenken_cage_feasibility", "kenken_solution_space_analysis"]
+        if scenario.task_category in {"rules_explanation", "beginner_question", "general_chat"}: return ["kenken_rules_reference", "kenken_puzzle_summary", "kenken_cage_feasibility"]
+        if scenario.task_category in {"technique_discussion", "advanced_question"}: return ["kenken_latin_unit_analysis", "kenken_cage_feasibility", "kenken_cage_intersection_analysis", "kenken_move_impact_analysis"]
         primary = self._tool_name_for_scenario(scenario)
-        if primary == "kenken_solution_verification": return ["kenken_cage_analysis", primary]
-        if primary == "kenken_cage_analysis": return [primary, "kenken_constraint_validation"]
-        if primary == "kenken_constraint_validation": return [primary, "kenken_cage_analysis"]
+        if primary == "kenken_solution_verification": return ["kenken_cage_analysis", "kenken_cage_intersection_analysis", "kenken_solution_space_analysis", primary]
+        if primary == "kenken_cage_analysis": return [primary, "kenken_cage_feasibility", "kenken_cage_intersection_analysis", "kenken_move_impact_analysis"]
+        if primary == "kenken_constraint_validation": return [primary, "kenken_latin_unit_analysis", "kenken_solution_space_analysis"]
         return [primary or "kenken_puzzle_summary", "kenken_constraint_validation"]
 
     def _tool_name_for_scenario(self, scenario: Scenario) -> str | None:
@@ -316,7 +326,54 @@ class KenKenDomainAdapter(VariedDomainSupport):
             }
         if tool_name == "kenken_rules_reference": return {"rules": ["Use each number once per row and column.", "Every cage must satisfy its target and operation."]}
         if tool_name == "kenken_puzzle_summary": return {"size": puzzle.metadata.get("size"), "cage_count": len(puzzle.metadata.get("cages", [])), "difficulty": puzzle.difficulty, "strategies": puzzle.required_strategies}
+        size, cages = parse_puzzle(puzzle.puzzle)
+        tuple_map = truth.get("cage_candidate_tuples", {})
+        if tool_name == "kenken_latin_unit_analysis":
+            return {"rows": self._latin_units(size, truth.get("forced_values", {}), True), "columns": self._latin_units(size, truth.get("forced_values", {}), False)}
+        if tool_name == "kenken_cage_feasibility":
+            return {"cage_feasibility": [{"cage_id": cage["id"], "operation": cage["operation"], "target": cage["target"], "candidate_count": len(tuple_map.get(cage["id"], [])), "feasible": bool(tuple_map.get(cage["id"], []))} for cage in cages]}
+        if tool_name == "kenken_cage_intersection_analysis":
+            return {"cell_candidates": self._cell_candidates(size, cages, tuple_map, truth.get("forced_values", {}))}
+        if tool_name == "kenken_move_impact_analysis":
+            return {"suggested_move": truth.get("suggested_move"), "eliminations": self._move_impact(size, cages, tuple_map, truth.get("suggested_move") or {})}
+        if tool_name == "kenken_solution_space_analysis":
+            solutions = solve_kenken(size, cages, limit=2) if not validate_structure(size, cages) else []
+            differences = [f"r{r + 1}c{c + 1}" for r in range(size) for c in range(size) if len(solutions) > 1 and solutions[0][r][c] != solutions[1][r][c]]
+            return {"solution_count_capped": len(solutions), "cap": 2, "status": truth.get("solvability_status"), "witness_differences": differences}
         return {}
+
+    @staticmethod
+    def _latin_units(size: int, forced: dict[str, int], rows: bool) -> list[dict[str, Any]]:
+        result = []
+        for unit in range(size):
+            present = {value for cell, value in forced.items() if parse_cell(cell)[0 if rows else 1] == unit}
+            result.append({"unit": f"{'row' if rows else 'column'}_{unit + 1}", "forced_values": sorted(present), "remaining_digits": sorted(set(range(1, size + 1)) - present)})
+        return result
+
+    @staticmethod
+    def _cell_candidates(size: int, cages: list[dict[str, Any]], tuple_map: dict[str, list[list[int]]], forced: dict[str, int]) -> dict[str, list[int]]:
+        result: dict[str, list[int]] = {}
+        for cage in cages:
+            tuples = tuple_map.get(cage["id"], [])
+            for index, cell in enumerate(cage["cells"]):
+                values = {values[index] for values in tuples}; row, col = parse_cell(cell)
+                excluded = {value for other, value in forced.items() if other != cell and (parse_cell(other)[0] == row or parse_cell(other)[1] == col)}
+                result[cell] = sorted(values - excluded)
+        return result
+
+    @staticmethod
+    def _move_impact(size: int, cages: list[dict[str, Any]], tuple_map: dict[str, list[list[int]]], move: dict[str, Any]) -> list[dict[str, Any]]:
+        del size
+        cell, value = move.get("cell"), move.get("value")
+        if not cell or value is None: return []
+        row, col = parse_cell(cell); result = []
+        for cage in cages:
+            for index, peer in enumerate(cage["cells"]):
+                pr, pc = parse_cell(peer)
+                if peer != cell and (pr == row or pc == col):
+                    values = sorted({candidate[index] for candidate in tuple_map.get(cage["id"], [])})
+                    if value in values: result.append({"cell": peer, "removed_value": value, "reason": "latin_unit"})
+        return result
 
     def _tool_reason(self, tool_name: str, scenario: Scenario) -> str:
         reasons = {

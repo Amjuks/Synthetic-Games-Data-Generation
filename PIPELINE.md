@@ -141,6 +141,11 @@ Current Sudoku tools:
 - `sudoku_solution_verification`
 - `sudoku_rules_reference`
 - `sudoku_board_summary`
+- `sudoku_unit_analysis`
+- `sudoku_naked_single_scan`
+- `sudoku_hidden_single_scan`
+- `sudoku_locked_candidate_scan`
+- `sudoku_move_impact_analysis`
 
 Current KenKen tools:
 - `kenken_cage_analysis`
@@ -148,6 +153,11 @@ Current KenKen tools:
 - `kenken_solution_verification`
 - `kenken_rules_reference`
 - `kenken_puzzle_summary`
+- `kenken_latin_unit_analysis`
+- `kenken_cage_feasibility`
+- `kenken_cage_intersection_analysis`
+- `kenken_move_impact_analysis`
+- `kenken_solution_space_analysis`
 
 Current Kakuro tools:
 - `kakuro_run_analysis`
@@ -155,6 +165,11 @@ Current Kakuro tools:
 - `kakuro_solution_verification`
 - `kakuro_rules_reference`
 - `kakuro_puzzle_summary`
+- `kakuro_run_topology`
+- `kakuro_crossing_analysis`
+- `kakuro_run_feasibility`
+- `kakuro_move_impact_analysis`
+- `kakuro_solution_space_analysis`
 
 Current Star Battle tools:
 - `starbattle_candidate_analysis`
@@ -162,6 +177,11 @@ Current Star Battle tools:
 - `starbattle_solution_verification`
 - `starbattle_rules_reference`
 - `starbattle_puzzle_summary`
+- `starbattle_row_quota_analysis`
+- `starbattle_column_quota_analysis`
+- `starbattle_region_quota_analysis`
+- `starbattle_adjacency_exclusion_scan`
+- `starbattle_solution_space_analysis`
 
 Current Nonogram tools:
 - `nonogram_line_analysis`
@@ -169,6 +189,11 @@ Current Nonogram tools:
 - `nonogram_solution_verification`
 - `nonogram_rules_reference`
 - `nonogram_puzzle_summary`
+- `nonogram_row_pattern_analysis`
+- `nonogram_column_pattern_analysis`
+- `nonogram_overlap_deduction`
+- `nonogram_cross_line_propagation`
+- `nonogram_solution_space_analysis`
 
 Current Hitori tools:
 - `hitori_duplicate_analysis`
@@ -176,6 +201,11 @@ Current Hitori tools:
 - `hitori_solution_verification`
 - `hitori_rules_reference`
 - `hitori_puzzle_summary`
+- `hitori_row_duplicate_groups`
+- `hitori_column_duplicate_groups`
+- `hitori_adjacency_risk_analysis`
+- `hitori_connectivity_analysis`
+- `hitori_solution_space_analysis`
 
 Current Nurikabe tools:
 - `nurikabe_deduction_scan`
@@ -183,6 +213,11 @@ Current Nurikabe tools:
 - `nurikabe_solution_verification`
 - `nurikabe_rules_reference`
 - `nurikabe_puzzle_summary`
+- `nurikabe_island_capacity_analysis`
+- `nurikabe_island_separation_scan`
+- `nurikabe_sea_connectivity_analysis`
+- `nurikabe_two_by_two_risk_scan`
+- `nurikabe_solution_space_analysis`
 
 Current Chess tools:
 - `chess_parse_validate`
@@ -217,7 +252,9 @@ Tool output is included in:
 - CSV output columns
 - dataset statistics
 
-All puzzle domains use ordered multi-tool bundles with at least two distinct verified calls per record. Shared code handles bundle schema, flattened export fields, complexity metadata, resume reservations, and enforcement only; each domain adapter selects and executes its own rules, summary, candidate/deduction, constraint, and solution-verification tools. Difficulty scheduling cycles across easy, medium, hard, and expert whenever all four are configured.
+All domains expose an inspectable `tool_catalog` of immutable tool specifications. Startup validation enforces `puzzles.min_tool_catalog_size` (10 by default), domain-prefixed unique names, callable executors, registered routes, and reachability from configured scenarios. Every puzzle domain has exactly 10 tools; Chess has 20. Samples still use ordered, purposeful bundles—normally two to five distinct verified calls—rather than invoking the entire catalog. Shared code handles bundle schema, flattened export fields, complexity metadata, resume reservations, and enforcement; each domain adapter selects and executes its own rules, summary, candidate/deduction, constraint, solution-space, and verification tools. Difficulty scheduling cycles across easy, medium, hard, and expert whenever all four are configured.
+
+Solution-space tools run the domain solver with a two-solution cap. They report the capped count, solver status, and cells that differ between two ambiguity witnesses without exposing either witness grid. Malformed-input routes deliberately omit both solution-space and complete-solution verification tools.
 
 ### 5. LLM Chat Generator
 Implementation:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..domain_support import VariedDomainSupport, build_tool_usage, compact_tool_context
+from ..domain_support import VariedDomainSupport, build_tool_usage, compact_tool_context, make_tool_catalog
 from ..models import PuzzleRecord, Scenario, ValidationResult
 from ..puzzles import PuzzleManager
 from ..scenario import ScenarioGenerator
@@ -11,6 +11,18 @@ from ..validation import SampleValidator
 
 class SudokuDomainAdapter(VariedDomainSupport):
     name = "sudoku"
+    tool_catalog = make_tool_catalog(name, {
+        "sudoku_candidate_scan": "Candidate digits for every empty cell and a grounded next move.",
+        "sudoku_board_validation": "Row, column, box, solvability, and conflict validation.",
+        "sudoku_solution_verification": "Solver-backed complete solution verification.",
+        "sudoku_rules_reference": "Canonical Sudoku rules and immutable-given guidance.",
+        "sudoku_board_summary": "Board dimensions, clue density, difficulty, and strategies.",
+        "sudoku_unit_analysis": "Missing digits and candidate coverage for every row, column, and box.",
+        "sudoku_naked_single_scan": "Empty cells having exactly one legal candidate.",
+        "sudoku_hidden_single_scan": "Digits occurring in only one candidate cell within a unit.",
+        "sudoku_locked_candidate_scan": "Pointing and claiming candidates locked to a row or column.",
+        "sudoku_move_impact_analysis": "Peer candidate eliminations caused by the suggested move.",
+    })
 
     def __init__(self, config: dict[str, Any]):
         self.config = config
@@ -82,14 +94,20 @@ class SudokuDomainAdapter(VariedDomainSupport):
         return row
 
     def _tool_bundle(self, scenario: Scenario) -> list[str]:
+        if scenario.edge_case == "malformed_input":
+            return ["sudoku_board_validation", "sudoku_board_summary", "sudoku_rules_reference"]
+        if scenario.edge_case in {"invalid_board", "unsolvable_board", "ambiguous_board"}:
+            return ["sudoku_board_validation", "sudoku_unit_analysis", "sudoku_candidate_scan"]
         if scenario.task_category in {"rules_explanation", "beginner_question", "general_chat"}:
-            return ["sudoku_rules_reference", "sudoku_board_summary"]
+            return ["sudoku_rules_reference", "sudoku_board_summary", "sudoku_unit_analysis"]
+        if scenario.task_category in {"technique_discussion", "advanced_question"}:
+            return ["sudoku_candidate_scan", "sudoku_hidden_single_scan", "sudoku_locked_candidate_scan", "sudoku_unit_analysis"]
         primary = self._tool_name_for_scenario(scenario)
         if primary == "sudoku_solution_verification":
-            return ["sudoku_candidate_scan", primary]
-        if primary == "sudoku_candidate_scan": return [primary, "sudoku_board_validation"]
-        if primary == "sudoku_board_validation": return [primary, "sudoku_candidate_scan"]
-        return [primary or "sudoku_candidate_scan", "sudoku_board_validation"]
+            return ["sudoku_candidate_scan", "sudoku_naked_single_scan", "sudoku_hidden_single_scan", primary]
+        if primary == "sudoku_candidate_scan": return [primary, "sudoku_naked_single_scan", "sudoku_hidden_single_scan", "sudoku_move_impact_analysis"]
+        if primary == "sudoku_board_validation": return [primary, "sudoku_unit_analysis", "sudoku_move_impact_analysis"]
+        return [primary or "sudoku_candidate_scan", "sudoku_board_validation", "sudoku_unit_analysis"]
 
     def _tool_name_for_scenario(self, scenario: Scenario) -> str | None:
         if scenario.tool_usage == "candidate_scan" or scenario.task_category in {"hint", "next_best_move"}:
@@ -125,7 +143,68 @@ class SudokuDomainAdapter(VariedDomainSupport):
             return {"rules": ["Place 1–9 once in every row, column, and 3x3 box.", "Given cells cannot be changed."]}
         if tool_name == "sudoku_board_summary":
             return {"given_count": puzzle.num_clues, "empty_count": 81 - puzzle.num_clues, "difficulty": puzzle.difficulty, "strategies": puzzle.required_strategies}
+        candidates = ground_truth.get("candidates", {})
+        if tool_name == "sudoku_unit_analysis":
+            return {"units": self._unit_analysis(puzzle.puzzle, candidates)}
+        if tool_name == "sudoku_naked_single_scan":
+            return {"naked_singles": [{"cell": cell, "digit": values[0]} for cell, values in sorted(candidates.items()) if len(values) == 1]}
+        if tool_name == "sudoku_hidden_single_scan":
+            return {"hidden_singles": self._hidden_singles(candidates)}
+        if tool_name == "sudoku_locked_candidate_scan":
+            return {"locked_candidates": self._locked_candidates(candidates)}
+        if tool_name == "sudoku_move_impact_analysis":
+            move = ground_truth.get("suggested_move") or {}
+            return {"suggested_move": move, "peer_eliminations": self._move_impact(move, candidates)}
         return {}
+
+    @staticmethod
+    def _cell(row: int, col: int) -> str: return f"r{row + 1}c{col + 1}"
+
+    @classmethod
+    def _units(cls) -> list[tuple[str, list[str]]]:
+        rows = [(f"row_{r + 1}", [cls._cell(r, c) for c in range(9)]) for r in range(9)]
+        columns = [(f"column_{c + 1}", [cls._cell(r, c) for r in range(9)]) for c in range(9)]
+        boxes = [(f"box_{br + 1}_{bc + 1}", [cls._cell(r, c) for r in range(br * 3, br * 3 + 3) for c in range(bc * 3, bc * 3 + 3)]) for br in range(3) for bc in range(3)]
+        return rows + columns + boxes
+
+    @classmethod
+    def _unit_analysis(cls, board: str, candidates: dict[str, list[str]]) -> list[dict[str, Any]]:
+        values = {cls._cell(i // 9, i % 9): value for i, value in enumerate(board[:81]) if value in "123456789"}
+        return [{"unit": name, "missing_digits": sorted(set("123456789") - {values[cell] for cell in cells if cell in values}), "empty_cells": [cell for cell in cells if cell in candidates]} for name, cells in cls._units()]
+
+    @classmethod
+    def _hidden_singles(cls, candidates: dict[str, list[str]]) -> list[dict[str, str]]:
+        found: dict[tuple[str, str], dict[str, str]] = {}
+        for unit, cells in cls._units():
+            for digit in "123456789":
+                matches = [cell for cell in cells if digit in candidates.get(cell, [])]
+                if len(matches) == 1:
+                    found[(matches[0], digit)] = {"cell": matches[0], "digit": digit, "unit": unit}
+        return list(found.values())
+
+    @classmethod
+    def _locked_candidates(cls, candidates: dict[str, list[str]]) -> list[dict[str, Any]]:
+        results = []
+        for br in range(3):
+            for bc in range(3):
+                cells = [cls._cell(r, c) for r in range(br * 3, br * 3 + 3) for c in range(bc * 3, bc * 3 + 3)]
+                for digit in "123456789":
+                    matches = [cell for cell in cells if digit in candidates.get(cell, [])]
+                    rows = {cell.split("c")[0] for cell in matches}; columns = {cell.split("c")[1] for cell in matches}
+                    if len(matches) > 1 and (len(rows) == 1 or len(columns) == 1):
+                        results.append({"box": f"box_{br + 1}_{bc + 1}", "digit": digit, "cells": matches, "locked_to": f"row_{next(iter(rows))[1:]}" if len(rows) == 1 else f"column_{next(iter(columns))}"})
+        return results
+
+    @staticmethod
+    def _move_impact(move: dict[str, Any], candidates: dict[str, list[str]]) -> list[dict[str, str]]:
+        cell, digit = move.get("cell"), str(move.get("value") or move.get("digit") or "")
+        if not cell or not digit or "c" not in cell: return []
+        row, col = (int(part) - 1 for part in cell[1:].split("c")); impacted = []
+        for peer, values in sorted(candidates.items()):
+            pr, pc = (int(part) - 1 for part in peer[1:].split("c"))
+            if peer != cell and digit in values and (pr == row or pc == col or (pr // 3, pc // 3) == (row // 3, col // 3)):
+                impacted.append({"cell": peer, "removed_candidate": digit})
+        return impacted
 
     def _tool_reason(self, tool_name: str, scenario: Scenario) -> str:
         reasons = {

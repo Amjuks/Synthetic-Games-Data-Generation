@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..domain_support import VariedDomainSupport, build_tool_usage
-from ..kakuro import KakuroPuzzleManager, parse_puzzle, validate_structure
+from ..domain_support import VariedDomainSupport, build_tool_usage, make_tool_catalog
+from ..kakuro import KakuroPuzzleManager, parse_puzzle, solve_kakuro, validate_structure
 from ..models import PuzzleRecord, Scenario, ValidationResult
 from ..scenario import ScenarioGenerator
 
@@ -92,6 +92,13 @@ class KakuroValidator:
 
 class KakuroDomainAdapter(VariedDomainSupport):
     name = "kakuro"
+    tool_catalog = make_tool_catalog(name, {
+        "kakuro_run_analysis": "Distinct-digit run combinations, cell candidates, and a deduction.", "kakuro_constraint_validation": "Clue structure, sums, repeats, and solver validation.",
+        "kakuro_solution_verification": "Complete solver-backed grid verification.", "kakuro_rules_reference": "Canonical sum and no-repeat rules.", "kakuro_puzzle_summary": "Dimensions, run count, and difficulty.",
+        "kakuro_run_topology": "Across/down run membership for every answer cell.", "kakuro_crossing_analysis": "Candidate values surviving intersecting runs.",
+        "kakuro_run_feasibility": "Candidate counts and feasibility for every clue run.", "kakuro_move_impact_analysis": "Peer eliminations caused by the suggested digit.",
+        "kakuro_solution_space_analysis": "Capped solution count and ambiguous witness differences.",
+    })
 
     def __init__(self, config: dict[str, Any]):
         self.config = config
@@ -170,11 +177,14 @@ class KakuroDomainAdapter(VariedDomainSupport):
         return row
 
     def _tool_bundle(self, scenario: Scenario) -> list[str]:
-        if scenario.task_category in {"rules_explanation", "beginner_question", "general_chat"}: return ["kakuro_rules_reference", "kakuro_puzzle_summary"]
+        if scenario.edge_case == "malformed_input": return ["kakuro_constraint_validation", "kakuro_puzzle_summary", "kakuro_rules_reference"]
+        if scenario.edge_case in {"invalid_clues", "unsolvable_puzzle", "ambiguous_puzzle"}: return ["kakuro_constraint_validation", "kakuro_run_feasibility", "kakuro_solution_space_analysis"]
+        if scenario.task_category in {"rules_explanation", "beginner_question", "general_chat"}: return ["kakuro_rules_reference", "kakuro_puzzle_summary", "kakuro_run_topology"]
+        if scenario.task_category in {"technique_discussion", "advanced_question"}: return ["kakuro_run_topology", "kakuro_crossing_analysis", "kakuro_run_feasibility", "kakuro_move_impact_analysis"]
         primary = self._tool_name_for_scenario(scenario)
-        if primary == "kakuro_solution_verification": return ["kakuro_run_analysis", primary]
-        if primary == "kakuro_run_analysis": return [primary, "kakuro_constraint_validation"]
-        if primary == "kakuro_constraint_validation": return [primary, "kakuro_run_analysis"]
+        if primary == "kakuro_solution_verification": return ["kakuro_run_analysis", "kakuro_crossing_analysis", "kakuro_solution_space_analysis", primary]
+        if primary == "kakuro_run_analysis": return [primary, "kakuro_run_feasibility", "kakuro_crossing_analysis", "kakuro_move_impact_analysis"]
+        if primary == "kakuro_constraint_validation": return [primary, "kakuro_run_topology", "kakuro_solution_space_analysis"]
         return [primary or "kakuro_puzzle_summary", "kakuro_constraint_validation"]
 
     def _tool_name_for_scenario(self, scenario: Scenario) -> str | None:
@@ -211,7 +221,28 @@ class KakuroDomainAdapter(VariedDomainSupport):
             }
         if tool_name == "kakuro_rules_reference": return {"rules": ["Digits in each run sum to its clue.", "Digits cannot repeat within a run."]}
         if tool_name == "kakuro_puzzle_summary": return {"height": puzzle.metadata.get("height"), "width": puzzle.metadata.get("width"), "run_count": len(puzzle.metadata.get("runs", [])), "difficulty": puzzle.difficulty}
+        height, width, blocks, runs = parse_puzzle(puzzle.puzzle)
+        combinations = truth.get("run_candidate_combinations", {}); cell_candidates = truth.get("cell_candidates", {})
+        if tool_name == "kakuro_run_topology":
+            topology: dict[str, list[dict[str, Any]]] = {}
+            for run in runs:
+                for cell in run["cells"]: topology.setdefault(cell, []).append({"run_id": run["id"], "direction": run["direction"], "target": run["target"]})
+            return {"cells": topology}
+        if tool_name == "kakuro_crossing_analysis": return {"cell_candidates": cell_candidates, "crossing_cells": sorted(cell for cell in cell_candidates if sum(cell in run["cells"] for run in runs) > 1)}
+        if tool_name == "kakuro_run_feasibility": return {"runs": [{"run_id": run["id"], "target": run["target"], "length": len(run["cells"]), "candidate_count": len(combinations.get(run["id"], [])), "feasible": bool(combinations.get(run["id"], []))} for run in runs]}
+        if tool_name == "kakuro_move_impact_analysis": return {"suggested_move": truth.get("suggested_move"), "eliminations": self._move_impact(runs, cell_candidates, truth.get("suggested_move") or {})}
+        if tool_name == "kakuro_solution_space_analysis":
+            solutions = solve_kakuro(height, width, blocks, runs, limit=2) if not validate_structure(height, width, blocks, runs) else []
+            differences = sorted(cell for cell in set((solutions[0] if solutions else {})) | set((solutions[1] if len(solutions) > 1 else {})) if len(solutions) > 1 and solutions[0].get(cell) != solutions[1].get(cell))
+            return {"solution_count_capped": len(solutions), "cap": 2, "status": truth.get("solvability_status"), "witness_differences": differences}
         return {}
+
+    @staticmethod
+    def _move_impact(runs: list[dict[str, Any]], candidates: dict[str, list[int]], move: dict[str, Any]) -> list[dict[str, Any]]:
+        cell, value = move.get("cell"), move.get("value")
+        if not cell or value is None: return []
+        peers = {peer for run in runs if cell in run["cells"] for peer in run["cells"] if peer != cell}
+        return [{"cell": peer, "removed_value": value, "reason": "no_repeat_in_run"} for peer in sorted(peers) if value in candidates.get(peer, [])]
 
     def _compact_tool_usage(self, tool_usage: dict[str, Any]) -> dict[str, Any]:
         compact = dict(tool_usage)

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..domain_support import VariedDomainSupport, build_tool_usage, compact_tool_context
+from ..domain_support import VariedDomainSupport, build_tool_usage, compact_tool_context, make_tool_catalog
 from ..models import PuzzleRecord, Scenario, ValidationResult
-from ..nonogram import NonogramPuzzleManager, parse_puzzle, validate_structure
+from ..nonogram import NonogramPuzzleManager, line_patterns, parse_puzzle, solve_nonogram, validate_structure
 from ..scenario import ScenarioGenerator
 
 
@@ -59,6 +59,13 @@ class NonogramValidator:
 
 class NonogramDomainAdapter(VariedDomainSupport):
     name = "nonogram"
+    tool_catalog = make_tool_catalog(name, {
+        "nonogram_line_analysis": "Forced filled and empty cells across all lines.", "nonogram_constraint_validation": "Clue structure and solver status validation.",
+        "nonogram_solution_verification": "Complete solver-backed grid verification.", "nonogram_rules_reference": "Canonical run and separation rules.",
+        "nonogram_puzzle_summary": "Dimensions and clue counts.", "nonogram_row_pattern_analysis": "Legal pattern counts and examples for each row.",
+        "nonogram_column_pattern_analysis": "Legal pattern counts and examples for each column.", "nonogram_overlap_deduction": "Cells shared by every legal pattern of an individual line.",
+        "nonogram_cross_line_propagation": "Forced cells confirmed through row and column evidence.", "nonogram_solution_space_analysis": "Capped solution count and ambiguous witness differences.",
+    })
     def __init__(self, config: dict[str, Any]):
         self.config, self.prompts = config, config.get("prompts", {})
         self.scenario_generator, self.puzzle_manager, self.validator = NonogramScenarioGenerator(config), NonogramPuzzleManager(config), NonogramValidator()
@@ -68,9 +75,7 @@ class NonogramDomainAdapter(VariedDomainSupport):
     def mark_problem_used(self, puzzle: PuzzleRecord) -> None: self.puzzle_manager.mark_used(puzzle)
     def validate(self, output: dict[str, Any], scenario: Scenario, puzzle: PuzzleRecord) -> ValidationResult: return self.validator.validate(output, scenario, puzzle)
     def maybe_use_tool(self, scenario: Scenario, puzzle: PuzzleRecord) -> dict[str, Any]:
-        truth = puzzle.ground_truth
-        outputs = {"nonogram_line_analysis": {"forced_filled": truth.get("forced_filled", []), "forced_empty": truth.get("forced_empty", []), "suggested_move": truth.get("suggested_move")}, "nonogram_constraint_validation": {"validity_status": truth.get("validity_status"), "solvability_status": truth.get("solvability_status"), "structural_violations": truth.get("structural_violations", [])}, "nonogram_solution_verification": {"solution": truth.get("solution"), "solution_grid": truth.get("solution_grid"), "unique_solution_status": truth.get("unique_solution_status")}, "nonogram_rules_reference": {"rules": ["Clues describe consecutive filled runs in order.", "Separate runs require at least one empty cell."]}, "nonogram_puzzle_summary": {"height": puzzle.metadata.get("height"), "width": puzzle.metadata.get("width"), "row_count": len(puzzle.metadata.get("row_clues", [])), "column_count": len(puzzle.metadata.get("column_clues", []))}}
-        return build_tool_usage(scenario=scenario, puzzle=puzzle, tool_names=self._tool_bundle(scenario), input_for=lambda name: {"puzzle_id": puzzle.puzzle_id, "task_category": scenario.task_category, "edge_case": scenario.edge_case, "height": puzzle.metadata.get("height"), "width": puzzle.metadata.get("width")}, output_for=lambda name: outputs[name])
+        return build_tool_usage(scenario=scenario, puzzle=puzzle, tool_names=self._tool_bundle(scenario), input_for=lambda name: {"puzzle_id": puzzle.puzzle_id, "task_category": scenario.task_category, "edge_case": scenario.edge_case, "height": puzzle.metadata.get("height"), "width": puzzle.metadata.get("width")}, output_for=lambda name: self._run_tool(name, puzzle))
     def prompt_problem(self, puzzle: PuzzleRecord) -> dict[str, Any]: return {"puzzle_id": puzzle.puzzle_id, "height": puzzle.metadata.get("height"), "width": puzzle.metadata.get("width"), "difficulty": puzzle.difficulty, "required_strategies": puzzle.required_strategies, "transformation": puzzle.transformation}
     def prompt_ground_truth(self, puzzle: PuzzleRecord) -> dict[str, Any]:
         truth = puzzle.ground_truth
@@ -82,11 +87,14 @@ class NonogramDomainAdapter(VariedDomainSupport):
     def flatten_sample_row(self, row: dict[str, Any], sample: dict[str, Any]) -> dict[str, Any]:
         metadata = sample.get("puzzle_metadata", {}).get("metadata", {}); row.update({"domain": sample.get("domain", self.name), "grid_height": metadata.get("height"), "grid_width": metadata.get("width"), "row_clues": metadata.get("row_clues", []), "column_clues": metadata.get("column_clues", []), "tool_used": sample.get("tool_used", False), "tool_name": sample.get("tool_usage_details", {}).get("tool_name")}); self._add_flat_tool_metadata(row, sample); return row
     def _tool_bundle(self, scenario: Scenario) -> list[str]:
-        if scenario.task_category in {"rules_explanation", "beginner_question", "general_chat"}: return ["nonogram_rules_reference", "nonogram_puzzle_summary"]
+        if scenario.edge_case == "malformed_input": return ["nonogram_constraint_validation", "nonogram_puzzle_summary", "nonogram_rules_reference"]
+        if scenario.edge_case in {"invalid_clues", "unsolvable_puzzle", "ambiguous_puzzle"}: return ["nonogram_constraint_validation", "nonogram_solution_space_analysis", "nonogram_overlap_deduction"]
+        if scenario.task_category in {"rules_explanation", "beginner_question", "general_chat"}: return ["nonogram_rules_reference", "nonogram_puzzle_summary", "nonogram_overlap_deduction"]
+        if scenario.task_category in {"technique_discussion", "advanced_question"}: return ["nonogram_row_pattern_analysis", "nonogram_column_pattern_analysis", "nonogram_overlap_deduction", "nonogram_cross_line_propagation"]
         primary = self._tool_name(scenario)
-        if primary == "nonogram_solution_verification": return ["nonogram_line_analysis", primary]
-        if primary == "nonogram_line_analysis": return [primary, "nonogram_constraint_validation"]
-        if primary == "nonogram_constraint_validation": return [primary, "nonogram_line_analysis"]
+        if primary == "nonogram_solution_verification": return ["nonogram_line_analysis", "nonogram_cross_line_propagation", "nonogram_solution_space_analysis", primary]
+        if primary == "nonogram_line_analysis": return [primary, "nonogram_overlap_deduction", "nonogram_cross_line_propagation"]
+        if primary == "nonogram_constraint_validation": return [primary, "nonogram_solution_space_analysis", "nonogram_line_analysis"]
         return [primary or "nonogram_puzzle_summary", "nonogram_constraint_validation"]
     @staticmethod
     def _tool_name(scenario: Scenario) -> str | None:
@@ -94,3 +102,45 @@ class NonogramDomainAdapter(VariedDomainSupport):
         if scenario.tool_usage == "line_candidate_scan" or scenario.task_category in {"hint", "next_best_move", "clue_analysis"}: return "nonogram_line_analysis"
         if scenario.tool_usage == "solution_verification" or scenario.task_category == "solve_puzzle": return "nonogram_solution_verification"
         return None
+
+    def _run_tool(self, name: str, puzzle: PuzzleRecord) -> dict[str, Any]:
+        truth = puzzle.ground_truth; height, width, rows, columns = parse_puzzle(puzzle.puzzle)
+        if name == "nonogram_line_analysis": return {"forced_filled": truth.get("forced_filled", []), "forced_empty": truth.get("forced_empty", []), "suggested_move": truth.get("suggested_move")}
+        if name == "nonogram_constraint_validation": return {"validity_status": truth.get("validity_status"), "solvability_status": truth.get("solvability_status"), "structural_violations": truth.get("structural_violations", [])}
+        if name == "nonogram_solution_verification": return {"solution": truth.get("solution"), "solution_grid": truth.get("solution_grid"), "unique_solution_status": truth.get("unique_solution_status")}
+        if name == "nonogram_rules_reference": return {"rules": ["Clues describe consecutive filled runs in order.", "Separate runs require at least one empty cell."]}
+        if name == "nonogram_puzzle_summary": return {"height": height, "width": width, "row_count": len(rows), "column_count": len(columns)}
+        if name == "nonogram_row_pattern_analysis": return {"rows": self._pattern_summary(width, rows, "row")}
+        if name == "nonogram_column_pattern_analysis": return {"columns": self._pattern_summary(height, columns, "column")}
+        if name == "nonogram_overlap_deduction": return {"line_overlaps": self._overlaps(width, rows, "row") + self._overlaps(height, columns, "column")}
+        if name == "nonogram_cross_line_propagation": return {"forced_filled": truth.get("forced_filled", []), "forced_empty": truth.get("forced_empty", []), "evidence": "solver_consensus_across_rows_and_columns"}
+        if name == "nonogram_solution_space_analysis":
+            solutions = solve_nonogram(height, width, rows, columns, limit=2) if not validate_structure(height, width, rows, columns) else []
+            return self._solution_space(solutions, height, width, truth.get("solvability_status"))
+        return {}
+
+    @staticmethod
+    def _pattern_summary(length: int, clues: list[list[int]], label: str) -> list[dict[str, Any]]:
+        result = []
+        for index, clue in enumerate(clues):
+            patterns = line_patterns(length, clue)
+            result.append({label: index + 1, "clue": clue, "pattern_count": len(patterns), "examples": patterns[:4]})
+        return result
+
+    @staticmethod
+    def _overlaps(length: int, clues: list[list[int]], label: str) -> list[dict[str, Any]]:
+        result = []
+        for index, clue in enumerate(clues):
+            patterns = line_patterns(length, clue)
+            if patterns:
+                filled = [offset + 1 for offset in range(length) if all(pattern[offset] for pattern in patterns)]
+                empty = [offset + 1 for offset in range(length) if all(not pattern[offset] for pattern in patterns)]
+                if filled or empty: result.append({label: index + 1, "forced_filled_positions": filled, "forced_empty_positions": empty})
+        return result
+
+    @staticmethod
+    def _solution_space(solutions: list[list[list[int]]], height: int, width: int, status: str | None) -> dict[str, Any]:
+        differences = []
+        if len(solutions) > 1:
+            differences = [f"r{r + 1}c{c + 1}" for r in range(height) for c in range(width) if solutions[0][r][c] != solutions[1][r][c]]
+        return {"solution_count_capped": len(solutions), "cap": 2, "status": status, "witness_differences": differences}
