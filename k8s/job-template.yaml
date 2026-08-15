@@ -1,0 +1,70 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: __JOB_NAME__
+  namespace: synthetic-puzzles
+  labels:
+    app.kubernetes.io/name: synthetic-puzzle-generator
+    app.kubernetes.io/component: dataset-generation
+    puzzle.openai.com/domain: __DOMAIN__
+    puzzle.openai.com/run-id: __RUN_ID__
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: synthetic-puzzle-generator
+        puzzle.openai.com/domain: __DOMAIN__
+        puzzle.openai.com/run-id: __RUN_ID__
+    spec:
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: generator
+          image: __IMAGE__
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -m
+            - src.generator.cli
+          args:
+            - run
+            - --domain
+            - __DOMAIN__
+            - --samples
+            - "__SAMPLES__"
+            - --conversation-type
+            - __CONVERSATION_TYPE__
+            - --max-turns
+            - "__MAX_TURNS__"
+            - --job-name
+            - __JOB_NAME__
+          envFrom:
+            - secretRef:
+                name: __SECRET_NAME__
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          volumeMounts:
+            - name: output
+              mountPath: /app/outputs
+            - name: generator-config
+              mountPath: /app/config/defaults.yaml
+              subPath: defaults.yaml
+              readOnly: true
+            - name: generator-config
+              mountPath: /app/config/prompts.yaml
+              subPath: prompts.yaml
+              readOnly: true
+      volumes:
+        - name: output
+          persistentVolumeClaim:
+            claimName: synthetic-puzzle-output
+        - name: generator-config
+          configMap:
+            name: __CONFIG_MAP_NAME__

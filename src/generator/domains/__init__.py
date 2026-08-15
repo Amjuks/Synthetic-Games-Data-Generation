@@ -9,6 +9,9 @@ from .kenken import KenKenDomainAdapter
 from .hitori import HitoriDomainAdapter
 from .nonogram import NonogramDomainAdapter
 from .nurikabe import NurikabeDomainAdapter
+from .othello import OthelloDomainAdapter
+from .minesweeper import MinesweeperDomainAdapter
+from .wordle import WordleDomainAdapter
 from .starbattle import StarBattleDomainAdapter
 from .sudoku import SudokuDomainAdapter
 
@@ -22,6 +25,9 @@ SUPPORTED_DOMAINS = {
     "nonogram": NonogramDomainAdapter,
     "hitori": HitoriDomainAdapter,
     "nurikabe": NurikabeDomainAdapter,
+    "othello": OthelloDomainAdapter,
+    "minesweeper": MinesweeperDomainAdapter,
+    "wordle": WordleDomainAdapter,
 }
 
 

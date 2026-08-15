@@ -22,17 +22,28 @@ PUZZLE_ROUTE_CATEGORIES = {
     "advanced_question", "general_chat", "solve_row_column_box", "cage_analysis",
     "run_analysis", "region_analysis", "clue_analysis", "duplicate_analysis",
     "island_analysis",
+    "legal_move_check", "board_analysis", "mobility_analysis", "corner_strategy",
+    "endgame_analysis", "solve_board", "probability_analysis", "flag_analysis",
+    "chord_analysis", "next_best_guess", "feedback_check", "solve_word",
+    "candidate_analysis", "opener_strategy", "hard_mode_check",
 }
 PUZZLE_ROUTE_EDGES = {
     "none", "incorrect_assumption", "malformed_input", "invalid_board",
     "unsolvable_board", "ambiguous_board", "invalid_cages", "invalid_clues",
     "invalid_regions", "invalid_grid", "unsolvable_puzzle", "ambiguous_puzzle",
+    "illegal_move", "forced_pass", "terminal_position", "contradictory_input",
+    "contradictory_flags", "impossible_state", "no_forced_move",
+    "loss_state", "invalid_guess", "contradictory_feedback", "impossible_history",
+    "hard_mode_violation", "repeated_guess", "exhausted_attempts",
 }
 PUZZLE_ROUTE_MODES = {
     "none", "candidate_scan", "row_column_box_check", "solution_verification",
     "cage_candidate_scan", "cage_constraint_check", "run_candidate_scan",
     "sum_constraint_check", "constraint_check", "line_candidate_scan",
     "duplicate_scan", "deduction_scan",
+    "legal_move_scan", "move_application", "positional_analysis", "search",
+    "frontier_scan", "probability_analysis", "flag_validation",
+    "feedback_scoring", "candidate_filter", "entropy_analysis", "hard_mode_validation",
 }
 
 

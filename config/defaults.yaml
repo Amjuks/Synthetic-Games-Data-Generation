@@ -373,3 +373,42 @@ defaults:
         tones: [neutral, friendly, urgent, frustrated, academic]
         edge_cases: [none, incorrect_assumption, invalid_grid, ambiguous_puzzle, unsolvable_puzzle, malformed_input]
         tool_usage_modes: [none, deduction_scan, constraint_check, solution_verification]
+    othello:
+      puzzles:
+        persistent_bank_filename: othello_position_bank.jsonl
+        usage_stats_filename: othello_position_usage.json
+      scenario:
+        task_categories: [next_best_move, legal_move_check, board_analysis, mobility_analysis, corner_strategy, endgame_analysis, hint, mistake_correction, rules_explanation, technique_discussion, beginner_question, advanced_question, general_chat]
+        difficulty_levels: [easy, medium, hard, expert]
+        user_expertise_levels: [beginner, intermediate, advanced, expert]
+        user_personalities: [careful, impatient, curious, skeptical, analytical]
+        assistant_styles: [concise, coaching, explanatory, Socratic, supportive]
+        tones: [neutral, friendly, urgent, frustrated, academic]
+        edge_cases: [none, malformed_input, invalid_board, illegal_move, forced_pass, terminal_position, contradictory_input]
+        tool_usage_modes: [none, legal_move_scan, move_application, positional_analysis, search]
+    minesweeper:
+      puzzles:
+        persistent_bank_filename: minesweeper_board_bank.jsonl
+        usage_stats_filename: minesweeper_board_usage.json
+      scenario:
+        task_categories: [next_best_move, validity_check, rules_explanation, solve_board, probability_analysis, flag_analysis, chord_analysis, hint, mistake_correction, technique_discussion, beginner_question, advanced_question, general_chat]
+        difficulty_levels: [easy, medium, hard, expert]
+        user_expertise_levels: [beginner, intermediate, advanced, expert]
+        user_personalities: [careful, impatient, curious, skeptical, analytical]
+        assistant_styles: [concise, coaching, explanatory, Socratic, supportive]
+        tones: [neutral, friendly, urgent, frustrated, academic]
+        edge_cases: [none, malformed_input, invalid_clues, contradictory_flags, impossible_state, no_forced_move, loss_state]
+        tool_usage_modes: [none, frontier_scan, probability_analysis, flag_validation, solution_verification]
+    wordle:
+      puzzles:
+        persistent_bank_filename: wordle_game_bank.jsonl
+        usage_stats_filename: wordle_game_usage.json
+      scenario:
+        task_categories: [next_best_guess, feedback_check, rules_explanation, solve_word, candidate_analysis, opener_strategy, hard_mode_check, hint, mistake_correction, technique_discussion, beginner_question, advanced_question, general_chat]
+        difficulty_levels: [easy, medium, hard, expert]
+        user_expertise_levels: [beginner, intermediate, advanced, expert]
+        user_personalities: [careful, impatient, curious, skeptical, analytical]
+        assistant_styles: [concise, coaching, explanatory, Socratic, supportive]
+        tones: [neutral, friendly, urgent, frustrated, academic]
+        edge_cases: [none, malformed_input, invalid_guess, contradictory_feedback, impossible_history, hard_mode_violation, repeated_guess, exhausted_attempts]
+        tool_usage_modes: [none, feedback_scoring, candidate_filter, entropy_analysis, hard_mode_validation, solution_verification]

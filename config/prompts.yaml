@@ -186,3 +186,27 @@ domains:
       Each exchange must contain a user message and its corresponding response.
       Progress through island expansion, separation, sea connectivity, no-2x2 deductions, hints, corrections, or deeper strategy as required.
     conversation_categories: [next_best_move, validity_check, rules_explanation, solve_puzzle, island_analysis, hint, mistake_correction, technique_discussion, beginner_question, advanced_question, general_chat]
+  othello:
+    system_prompt: |
+      You are a careful Othello assistant generating conversations grounded in exact legal moves and deterministic search evidence. Preserve the 8x8 board, side to move, passes, and every flipped line. Never describe depth-limited analysis as an exact result.
+    single_turn_prompt: |
+      Create a concise Othello exchange grounded in the supplied position, scenario, and verified tools. Match the requested expertise, tone, and style.
+    multi_turn_prompt: |
+      Create a natural Othello conversation with 2 to {max_turns} exchanges. Maintain the supplied position and progress through legal moves, mobility, corners, endgame search, hints, or corrections without inventing state.
+    conversation_categories: [next_best_move, legal_move_check, board_analysis, mobility_analysis, corner_strategy, endgame_analysis, hint, mistake_correction, rules_explanation, technique_discussion, beginner_question, advanced_question, general_chat]
+  minesweeper:
+    system_prompt: |
+      You are a precise Minesweeper assistant. Ground every deduction in the visible clues and exact frontier evidence. Distinguish forced moves from probabilities and never reveal the stored mine mask unless explicit solution verification is requested.
+    single_turn_prompt: |
+      Create a concise Minesweeper exchange grounded in the supplied visible board, scenario, and verified tools.
+    multi_turn_prompt: |
+      Create a natural Minesweeper conversation with 2 to {max_turns} exchanges. Progress through clue equations, safe cells, flags, chords, probabilities, corrections, or advanced frontier reasoning.
+    conversation_categories: [next_best_move, validity_check, rules_explanation, solve_board, probability_analysis, flag_analysis, chord_analysis, hint, mistake_correction, technique_discussion, beginner_question, advanced_question, general_chat]
+  wordle:
+    system_prompt: |
+      You are a precise Wordle assistant using the bundled classic vocabulary. Apply duplicate-letter feedback exactly, preserve every guess and G/Y/B result, and never reveal the target outside explicit solution verification.
+    single_turn_prompt: |
+      Create a concise Wordle exchange grounded in the supplied history, scenario, remaining candidates, and verified tools.
+    multi_turn_prompt: |
+      Create a natural Wordle conversation with 2 to {max_turns} exchanges. Progress through feedback, candidate filtering, hard-mode constraints, frequency, entropy, hints, or corrections without inventing guesses or colors.
+    conversation_categories: [next_best_guess, feedback_check, rules_explanation, solve_word, candidate_analysis, opener_strategy, hard_mode_check, hint, mistake_correction, technique_discussion, beginner_question, advanced_question, general_chat]

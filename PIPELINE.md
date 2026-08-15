@@ -10,6 +10,11 @@ Registered domains:
 - `starbattle`
 - `nonogram`
 - `hitori`
+- `nurikabe`
+- `othello`
+- `minesweeper`
+- `wordle`
+- `chess`
 
 High-level flow:
 
@@ -36,6 +41,11 @@ Implementation:
 - `src/generator/domains/starbattle.py`
 - `src/generator/domains/nonogram.py`
 - `src/generator/domains/hitori.py`
+- `src/generator/domains/nurikabe.py`
+- `src/generator/domains/othello.py`
+- `src/generator/domains/minesweeper.py`
+- `src/generator/domains/wordle.py`
+- `src/generator/domains/chess.py`
 
 Input:
 - domain name from config or `--domain`
@@ -219,6 +229,47 @@ Current Nurikabe tools:
 - `nurikabe_two_by_two_risk_scan`
 - `nurikabe_solution_space_analysis`
 
+Current Othello tools:
+- `othello_board_validation`
+- `othello_legal_move_scan`
+- `othello_move_application`
+- `othello_disc_count_analysis`
+- `othello_mobility_analysis`
+- `othello_positional_analysis`
+- `othello_move_comparison`
+- `othello_endgame_search`
+- `othello_state_summary`
+- `othello_rules_reference`
+
+Current Minesweeper tools:
+- `minesweeper_board_validation`
+- `minesweeper_neighbor_analysis`
+- `minesweeper_frontier_analysis`
+- `minesweeper_forced_safe_scan`
+- `minesweeper_forced_mine_scan`
+- `minesweeper_probability_analysis`
+- `minesweeper_flag_validation`
+- `minesweeper_chord_analysis`
+- `minesweeper_solution_space_analysis`
+- `minesweeper_solution_verification`
+- `minesweeper_board_summary`
+- `minesweeper_rules_reference`
+
+Current Wordle tools:
+- `wordle_input_validation`
+- `wordle_feedback_scoring`
+- `wordle_history_validation`
+- `wordle_candidate_filter`
+- `wordle_letter_constraint_analysis`
+- `wordle_frequency_analysis`
+- `wordle_entropy_analysis`
+- `wordle_guess_ranking`
+- `wordle_hard_mode_validation`
+- `wordle_duplicate_letter_analysis`
+- `wordle_solution_verification`
+- `wordle_game_summary`
+- `wordle_rules_reference`
+
 Current Chess tools:
 - `chess_parse_validate`
 - `chess_reconstruct_position`
@@ -252,7 +303,9 @@ Tool output is included in:
 - CSV output columns
 - dataset statistics
 
-All domains expose an inspectable `tool_catalog` of immutable tool specifications. Startup validation enforces `puzzles.min_tool_catalog_size` (10 by default), domain-prefixed unique names, callable executors, registered routes, and reachability from configured scenarios. Every puzzle domain has exactly 10 tools; Chess has 20. Samples still use ordered, purposeful bundles—normally two to five distinct verified calls—rather than invoking the entire catalog. Shared code handles bundle schema, flattened export fields, complexity metadata, resume reservations, and enforcement; each domain adapter selects and executes its own rules, summary, candidate/deduction, constraint, solution-space, and verification tools. Difficulty scheduling cycles across easy, medium, hard, and expert whenever all four are configured.
+All domains expose an inspectable `tool_catalog` of immutable tool specifications. Startup validation enforces `puzzles.min_tool_catalog_size` (10 by default), domain-prefixed unique names, callable executors, registered routes, and reachability from configured scenarios. The seven original logic-puzzle domains and Othello have 10 tools, Minesweeper has 12, Wordle has 13, and Chess has 20. Samples still use ordered, purposeful bundles—normally two to five distinct verified calls—rather than invoking the entire catalog. Shared code handles bundle schema, flattened export fields, complexity metadata, resume reservations, and enforcement; each domain adapter selects and executes its own rules, summary, candidate/deduction, constraint, solution-space, and verification tools. Difficulty scheduling cycles across easy, medium, hard, and expert whenever all four are configured.
+
+Othello canonical state is JSON containing an 8×8 row-major board, side to move, and pass count. Its local engine supplies directional flips, mobility/positional evidence, deterministic depth-limited alpha-beta recommendations, and exact searches for generated expert endgames with at most ten empty squares. Minesweeper canonical state contains only visible cells; component enumeration plus global mine-count convolution supplies exact counts and probabilities without enumerating every full layout, and the mine mask is projected only into explicit solve/verification prompts. Wordle canonical state contains guess/feedback history and hard-mode state; the target is similarly restricted to explicit verification. Its two-pass feedback, candidate, constraint, entropy, and ranking engine uses the checksum-verified offline 2,315-answer/12,972-guess assets under `src/generator/data`.
 
 Solution-space tools run the domain solver with a two-solution cap. They report the capped count, solver status, and cells that differ between two ambiguity witnesses without exposing either witness grid. Malformed-input routes deliberately omit both solution-space and complete-solution verification tools.
 

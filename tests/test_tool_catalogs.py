@@ -9,7 +9,7 @@ from src.generator.domains import SUPPORTED_DOMAINS, get_domain_adapter
 from src.generator.models import Scenario
 
 
-PUZZLE_DOMAINS = ("sudoku", "kenken", "kakuro", "starbattle", "nonogram", "hitori", "nurikabe")
+PUZZLE_DOMAINS = ("sudoku", "kenken", "kakuro", "starbattle", "nonogram", "hitori", "nurikabe", "othello", "minesweeper", "wordle")
 NEW_TOOL_OUTPUT_KEYS = {
     "sudoku": {
         "sudoku_unit_analysis": "units", "sudoku_naked_single_scan": "naked_singles",
@@ -45,6 +45,18 @@ NEW_TOOL_OUTPUT_KEYS = {
         "nurikabe_island_capacity_analysis": "islands", "nurikabe_island_separation_scan": "forced_sea_between_clues",
         "nurikabe_sea_connectivity_analysis": "component_count", "nurikabe_two_by_two_risk_scan": "forced_island_to_avoid_2x2",
         "nurikabe_solution_space_analysis": "solution_count_capped",
+    },
+    "othello": {
+        "othello_legal_move_scan": "moves", "othello_mobility_analysis": "mobility",
+        "othello_move_comparison": "comparisons", "othello_state_summary": "validity_status",
+    },
+    "minesweeper": {
+        "minesweeper_frontier_analysis": "components", "minesweeper_probability_analysis": "probabilities",
+        "minesweeper_solution_space_analysis": "solution_count", "minesweeper_board_summary": "mine_count",
+    },
+    "wordle": {
+        "wordle_history_validation": "candidate_count", "wordle_candidate_filter": "candidates",
+        "wordle_letter_constraint_analysis": "green_positions", "wordle_game_summary": "guess_count",
     },
 }
 

@@ -1,7 +1,7 @@
 # Synthetic Puzzle Conversation Data Generator
 
 ## Project Overview
-This project generates synthetic Chess, Sudoku, KenKen, Kakuro, Star Battle, Nonogram (Picross/Griddlers), Hitori, and Nurikabe chat datasets with persistent job state, structured scenario generation, puzzle selection, validation, and diversity checks.
+This project generates synthetic Chess, Sudoku, KenKen, Kakuro, Star Battle, Nonogram (Picross/Griddlers), Hitori, Nurikabe, Othello, Minesweeper, and Wordle chat datasets with persistent job state, structured scenario generation, puzzle selection, validation, and diversity checks.
 
 Primary use case:
 - Build large puzzle conversation datasets for training, evaluation, or experimentation.
@@ -10,6 +10,7 @@ Key features:
 - Generates `single_turn`, `multi_turn`, or both conversation types in one run.
 - Supports `sudoku`, solver-backed `kenken`, solver-backed `kakuro`, solver-backed `starbattle`, and solver-backed `nonogram` through a domain adapter layer.
 - Supports solver-backed `hitori` and `nurikabe` through the same domain adapter layer.
+- Supports local deterministic `othello`, exact-frontier `minesweeper`, and offline classic-vocabulary `wordle` engines through the same adapter contract.
 - Supports stateful `chess` conversations from validated PGN/SAN game histories or complete FEN positions.
 - Uses structured scenarios instead of relying only on LLM creativity.
 - Selects puzzles from a persistent puzzle bank and creates transformed or edge-case variants.
@@ -123,6 +124,9 @@ python -m src.generator.cli run --domain starbattle --samples 5
 python -m src.generator.cli run --domain nonogram --samples 5
 python -m src.generator.cli run --domain hitori --samples 5
 python -m src.generator.cli run --domain nurikabe --samples 5
+python -m src.generator.cli run --domain othello --samples 5
+python -m src.generator.cli run --domain minesweeper --samples 5
+python -m src.generator.cli run --domain wordle --samples 5
 python -m src.generator.cli status --job-name my_job
 ```
 
@@ -136,6 +140,9 @@ puzzle-generator run --domain starbattle --samples 5
 puzzle-generator run --domain nonogram --samples 5
 puzzle-generator run --domain hitori --samples 5
 puzzle-generator run --domain nurikabe --samples 5
+puzzle-generator run --domain othello --samples 5
+puzzle-generator run --domain minesweeper --samples 5
+puzzle-generator run --domain wordle --samples 5
 ```
 
 ### Commands
@@ -151,7 +158,7 @@ puzzle-generator run --domain nurikabe --samples 5
 | Name | Description | Type | Default | Allowed values | Required |
 |---|---|---:|---|---|---|
 | `--samples` | Total sample indexes to process. On resume, the new value replaces the previous target but cannot be lower than the number already completed. | int | `config.defaults.samples` -> `10` | positive integers | Optional |
-| `--domain` | Generation domain. | string | `config.defaults.domain` -> `sudoku` | `chess`, `sudoku`, `kenken`, `kakuro`, `starbattle`, `nonogram`, `hitori`, `nurikabe` | Optional |
+| `--domain` | Generation domain. | string | `config.defaults.domain` -> `sudoku` | `chess`, `sudoku`, `kenken`, `kakuro`, `starbattle`, `nonogram`, `hitori`, `nurikabe`, `othello`, `minesweeper`, `wordle` | Optional |
 | `--conversation-type` | Which conversation types to generate. | string | `config.defaults.conversation_type` -> `both` | `single_turn`, `multi_turn`, `both` | Optional |
 | `--max-turns` | Upper bound for generated multi-turn scenario length. | int | `config.defaults.max_turns` -> `6` | positive integers | Optional |
 | `--job-name` | Output job directory name. If omitted, a timestamp-based name is generated. | string | auto-generated | any filesystem-safe string | Optional |
@@ -445,6 +452,9 @@ Current supported domain:
 - `nonogram`
 - `hitori`
 - `nurikabe`
+- `othello`
+- `minesweeper`
+- `wordle`
 
 Each adapter owns domain-specific scenario generation, puzzle selection, tool decisions, validation, prompt context, prompts, and CSV row extensions. Unsupported domains fail with a clear error before generation starts.
 
@@ -467,7 +477,7 @@ The versioned `chess-v2` catalog contains at least 256 deterministic legal game 
 
 Chess verification is operational by default: `engine_path: auto` and `tablebase_path: auto`. On the first engine-backed request, the pipeline discovers a configured/PATH engine or downloads the platform-appropriate stable Stockfish asset from the official GitHub release, verifies the release-provided SHA-256, extracts it safely into `outputs/.chess_backends/stockfish`, completes a UCI identity/legal-move healthcheck, and reuses the cache. Set `CHESS_ENGINE_PATH` only to override this with another local Stockfish executable. For ≤7-piece positions, a local `CHESS_TABLEBASE_PATH` takes priority; otherwise `auto` uses the retrying Lichess Syzygy endpoint enabled by default. `verification_backends_required: true` makes engine/tablebase categories fail before the model call if their required evidence cannot be verified—unverified best-move, tactical, evaluation, and tablebase samples are not generated.
 
-Every adapter exposes an immutable, inspectable `tool_catalog`. Startup validates the configured minimum size, unique domain-prefixed names, callable executors, registered routes, and reachability from configured scenarios. Sudoku, KenKen, Kakuro, Star Battle, Nonogram, Hitori, and Nurikabe each register 10 tools; Chess registers 20. Every generated record still uses only a purposeful subset of normally two to five distinct verified calls. Their schedulers cycle through easy, medium, hard, and expert positions; each puzzle records a deterministic complexity score, band, and measurable factors such as dimensions, clue density, and strategy count. Puzzle IDs from accepted and rejected history are reserved on resume, and selection refuses to reuse a puzzle within a job.
+Every adapter exposes an immutable, inspectable `tool_catalog`. Startup validates the configured minimum size, unique domain-prefixed names, callable executors, registered routes, and reachability from configured scenarios. Sudoku, KenKen, Kakuro, Star Battle, Nonogram, Hitori, Nurikabe, and Othello register 10 tools; Minesweeper registers 12, Wordle 13, and Chess 20. Every generated record still uses only a purposeful subset of normally two to five distinct verified calls. Their schedulers cycle through easy, medium, hard, and expert positions; each puzzle records a deterministic complexity score, band, and measurable factors such as dimensions, clue density, and strategy count. Puzzle IDs from accepted and rejected history are reserved on resume, and selection refuses to reuse a puzzle within a job.
 
 Hints and next-move scenarios route to focused candidates, deductions, and move-impact evidence. Technique and advanced scenarios use unit, intersection, quota, pattern, connectivity, or capacity analyzers. Validity and edge scenarios use deterministic diagnostics. Solver-space tools use a two-solution cap and expose only status, count, and differing cell coordinates; malformed-input routes never invoke solution-space or full-solution verification.
 
@@ -500,6 +510,12 @@ Nonogram uses deterministic solver-verified 5x5, 6x6, 8x8, and 10x10 clue grids.
 Hitori uses deterministic solver-verified 4x4 through 7x7 number grids. Its canonical `puzzle` JSON stores `size` and `grid`; solutions use a `#`/`.` shaded-cell mask in row-major order. Its tools cover row/column duplicate groups, forced shading, adjacency risks, unshaded connectivity, validation, verification, and capped solution-space evidence.
 
 Nurikabe uses solver-verified clue islands and sea masks. Its tools cover island capacity and separation, forced deductions, sea connectivity, 2x2-sea risks, validation, verification, and capped solution-space evidence.
+
+Othello stores canonical JSON with a 64-character `B`/`W`/`.` board, `side_to_move`, and `consecutive_passes`, rendered with `a1`–`h8` coordinates. Seeded legal playouts and symmetry variants cover all four difficulties. Easy/medium/hard recommendations use deterministic alpha-beta depths 2/3/4; expert positions have at most ten empties and are searched to completion. Only completed searches are labelled exact. Its 10 tools cover board validation, legal moves and flips, move application, disc counts, mobility, positional features, move comparison, exact endgames, state summary, and rules.
+
+Minesweeper stores canonical visible-state JSON (`width`, `height`, `total_mines`, and `visible`) while the generated mine mask remains persisted ground truth. Boards use 5×5/4, 8×8/10, 9×9/15, and 12×12/25 layouts. The solver decomposes clue-frontier components, enumerates component assignments, and combines them with total-mine dynamic programming and off-frontier combinations to produce exact solution counts and probabilities. Its 12 tools cover validation, neighbor equations, frontier components, forced safe/mine scans, probability, flags, chords, solution space, explicit verification, summary, and rules. Hint and probability prompts never receive the mine mask.
+
+Wordle stores canonical JSON with up to six `{guess, feedback}` entries, hard-mode state, and `G`/`Y`/`B` feedback; the answer remains persisted ground truth. Duplicate letters use the classic two-pass scoring algorithm. Candidate filtering, letter-count constraints, hard-mode validation, frequency scoring, entropy partitions, and deterministic ranking run locally against 2,315 answers and 12,972 accepted guesses. Its 13 tools cover input, feedback, history, candidates, constraints, frequency, entropy, ranking, hard mode, duplicate letters, explicit verification, summary, and rules. Non-verification prompt projections suppress the target. Vocabulary source details, normalized checksums, CC BY-SA attribution, and trademark notice are committed in `src/generator/data/WORDLE_VOCABULARY.md`.
 
 Model prompts use domain projections rather than repeating complete stored ground truth. Full sample metadata remains in JSONL, while large candidate collections are summarized in requests to protect the model context window. KenKen sends its cage layout once in the rendered board, limits tool evidence to the three most constrained cages, and summarizes large candidate sets by count plus examples. `generation.max_prompt_characters` (default `50000`) prevents an oversized request from reaching the API and records a `prompt_budget_exceeded` event with the complete credential-free prompt.
 

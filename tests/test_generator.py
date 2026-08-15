@@ -2,6 +2,8 @@ import csv
 import json
 import re
 
+import pytest
+
 from src.generator.generator import ConversationGenerator
 
 
@@ -92,6 +94,31 @@ def make_config(output_path: str) -> dict:
             "multi_turn_prompt": "multi {max_turns}",
         },
     }
+
+
+@pytest.mark.parametrize(
+    ("domain", "task"),
+    (("othello", "next_best_move"), ("minesweeper", "next_best_move"), ("wordle", "next_best_guess")),
+)
+def test_new_domains_generate_schema_compatible_single_turn_rows(tmp_path, domain, task):
+    config = make_config(str(tmp_path / domain)) | {"domain": domain}
+    config["scenario"] = {
+        **config["scenario"],
+        "task_categories": [task],
+        "difficulty_levels": ["easy"],
+        "edge_cases": ["none"],
+        "tool_usage_modes": ["none"],
+    }
+    generator = ConversationGenerator(config)
+    generator.model_client = StubModelClient({"conversation_type": "single_turn", "category": task, "prompt": "Question", "response": "Answer"})
+
+    row = generator.generate_single_turn(0)
+
+    assert generator.domain.name == domain
+    assert row["category"] == task
+    assert row["prompt"] == "Question" and row["response"] == "Answer"
+    assert row["board"]
+    json.dumps(row)
 
 
 def test_single_turn_normalizes_to_prompt_response_and_preserves_board(tmp_path):
@@ -220,12 +247,12 @@ def test_generated_sample_includes_domain_ground_truth_and_tool_usage(tmp_path):
 
 
 def test_unsupported_domain_fails_clearly(tmp_path):
-    config = make_config(str(tmp_path)) | {"domain": "wordle"}
+    config = make_config(str(tmp_path)) | {"domain": "unknown_game"}
 
     try:
         ConversationGenerator(config)
     except ValueError as exc:
-        assert "Unsupported domain 'wordle'" in str(exc)
+        assert "Unsupported domain 'unknown_game'" in str(exc)
     else:
         raise AssertionError("Expected unsupported domain to fail")
 
