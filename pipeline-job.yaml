@@ -1,0 +1,77 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: puzzle-all-games-s1000
+  namespace: synthetic-puzzles
+  labels:
+    app.kubernetes.io/name: synthetic-puzzle-generator
+    app.kubernetes.io/component: dataset-generation
+    puzzle.openai.com/domain: all
+    puzzle.openai.com/run-id: all-games-s1000
+spec:
+  completionMode: Indexed
+  completions: 11
+  parallelism: 11
+  backoffLimit: 22
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: synthetic-puzzle-generator
+        puzzle.openai.com/domain: all
+        puzzle.openai.com/run-id: all-games-s1000
+    spec:
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: generator
+          image: synthetic-puzzle-generator:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              case "${JOB_COMPLETION_INDEX}" in
+                0) DOMAIN=chess ;;
+                1) DOMAIN=sudoku ;;
+                2) DOMAIN=kenken ;;
+                3) DOMAIN=kakuro ;;
+                4) DOMAIN=starbattle ;;
+                5) DOMAIN=nonogram ;;
+                6) DOMAIN=hitori ;;
+                7) DOMAIN=nurikabe ;;
+                8) DOMAIN=othello ;;
+                9) DOMAIN=minesweeper ;;
+                10) DOMAIN=wordle ;;
+                *) echo "Unsupported completion index: ${JOB_COMPLETION_INDEX}" >&2; exit 1 ;;
+              esac
+
+              exec python -m src.generator.cli run \
+                --domain "${DOMAIN}" \
+                --samples 1000 \
+                --conversation-type both \
+                --max-turns 6 \
+                --job-name "puzzle-${DOMAIN}-s1000-all-games"
+          envFrom:
+            - secretRef:
+                name: model-credentials
+          env:
+            - name: JOB_COMPLETION_INDEX
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          volumeMounts:
+            - name: output
+              mountPath: /app/outputs
+      volumes:
+        - name: output
+          persistentVolumeClaim:
+            claimName: synthetic-puzzle-output
