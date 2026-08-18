@@ -31,28 +31,8 @@ spec:
           imagePullPolicy: IfNotPresent
           workingDir: /pipeline
           env:
-            - name: OPENAI_BASE_URL
-              value: http://litellm-proxy.llm-logging.svc.cluster.local:4000/v1
-            - name: OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: litellm-secret
-                  key: LITELLM_MASTER_KEY
-            - name: OPENAI_MODEL
-              value: gpt-oss-120b
-            - name: MODEL_PROVIDER
-              value: tensorstudio
-            - name: TENSORSTUDIO_API_URL
-              value: http://litellm-proxy.llm-logging.svc.cluster.local:4000/v1/chat/completions
-            - name: TENSORSTUDIO_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: litellm-secret
-                  key: LITELLM_MASTER_KEY
-            - name: TENSORSTUDIO_MODEL
-              value: gpt-oss-120b
-            - name: TENSORSTUDIO_TIMEOUT
-              value: "600"
+            # LLM provider, endpoint, API key, model, and timeout are loaded
+            # from /pipeline/.env by the generator after it finds the repo.
             - name: PIPELINE_SAMPLES
               value: "1000"
             - name: PIPELINE_CONVERSATION_TYPE
@@ -95,7 +75,11 @@ spec:
                 done
               fi
               if [ ! -f src/generator/cli.py ]; then
-                echo "Could not find src/generator/cli.py under /projects/data" >&2
+                echo "Could not find src/generator/cli.py under /home/aman/Synthetic-Games-Data-Generation" >&2
+                exit 1
+              fi
+              if [ ! -f .env ]; then
+                echo "Missing .env in the generator repository; refusing to use fallback LLM settings" >&2
                 exit 1
               fi
               if [ -f requirements.txt ]; then
