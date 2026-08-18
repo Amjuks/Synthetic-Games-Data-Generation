@@ -11,7 +11,7 @@ metadata:
 spec:
   completionMode: Indexed
   completions: 11
-  parallelism: 11
+  parallelism: 2
   ttlSecondsAfterFinished: 86400
   backoffLimit: 11
   template:
