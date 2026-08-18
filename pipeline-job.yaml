@@ -1,44 +1,68 @@
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: synthetic-puzzle-output
-  namespace: synthetic-puzzles
-spec:
-  accessModes:
-    - ReadWriteMany
-  resources:
-    requests:
-      storage: 100Gi
----
+# Runs the generator from shared storage using the in-cluster LiteLLM API.
+# The hostPath must be changed to the path visible on the Kubernetes node(s).
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: puzzle-all-games-s1000
-  namespace: synthetic-puzzles
+  name: pipeline-run
+  namespace: llm-logging
   labels:
-    app.kubernetes.io/name: synthetic-puzzle-generator
-    app.kubernetes.io/component: dataset-generation
-    puzzle.openai.com/domain: all
-    puzzle.openai.com/run-id: all-games-s1000
+    app: python-pipeline
+    pipeline: synthetic-games
 spec:
   completionMode: Indexed
   completions: 11
   parallelism: 11
-  backoffLimit: 22
-  ttlSecondsAfterFinished: 604800
+  ttlSecondsAfterFinished: 86400
+  backoffLimit: 11
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: synthetic-puzzle-generator
-        puzzle.openai.com/domain: all
-        puzzle.openai.com/run-id: all-games-s1000
+        app: python-pipeline
+        pipeline: synthetic-games
     spec:
       restartPolicy: Never
       terminationGracePeriodSeconds: 30
+      # Optional: pin to the node(s) that have the shared disk.
+      # nodeSelector:
+      #   kubernetes.io/hostname: soketlab-worker003
       containers:
-        - name: generator
-          image: synthetic-puzzle-generator:latest
+        - name: pipeline
+          image: python:3.11-slim
           imagePullPolicy: IfNotPresent
+          workingDir: /pipeline
+          env:
+            - name: OPENAI_BASE_URL
+              value: http://litellm-proxy.llm-logging.svc.cluster.local:4000/v1
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-secret
+                  key: LITELLM_MASTER_KEY
+            - name: OPENAI_MODEL
+              value: gpt-oss-120b
+            - name: MODEL_PROVIDER
+              value: tensorstudio
+            - name: TENSORSTUDIO_API_URL
+              value: http://litellm-proxy.llm-logging.svc.cluster.local:4000/v1/chat/completions
+            - name: TENSORSTUDIO_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-secret
+                  key: LITELLM_MASTER_KEY
+            - name: TENSORSTUDIO_MODEL
+              value: gpt-oss-120b
+            - name: TENSORSTUDIO_TIMEOUT
+              value: "600"
+            - name: PIPELINE_SAMPLES
+              value: "1000"
+            - name: PIPELINE_CONVERSATION_TYPE
+              value: both
+            - name: PIPELINE_MAX_TURNS
+              value: "6"
+            - name: JOB_COMPLETION_INDEX
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
           command:
             - /bin/sh
             - -ec
@@ -59,20 +83,34 @@ spec:
                 *) echo "Unsupported completion index: ${JOB_COMPLETION_INDEX}" >&2; exit 1 ;;
               esac
 
+              cd /pipeline
+              # The shared mount may contain the repository at its root or in
+              # one existing subdirectory; do not create any directories.
+              if [ ! -f src/generator/cli.py ]; then
+                for candidate in /pipeline/*; do
+                  if [ -f "${candidate}/src/generator/cli.py" ]; then
+                    cd "${candidate}"
+                    break
+                  fi
+                done
+              fi
+              if [ ! -f src/generator/cli.py ]; then
+                echo "Could not find src/generator/cli.py under /projects/data" >&2
+                exit 1
+              fi
+              if [ -f requirements.txt ]; then
+                pip install --quiet -r requirements.txt
+              fi
+
               exec python -m src.generator.cli run \
                 --domain "${DOMAIN}" \
-                --samples 1000 \
-                --conversation-type both \
-                --max-turns 6 \
-                --job-name "puzzle-${DOMAIN}-s1000-all-games"
-          envFrom:
-            - secretRef:
-                name: model-credentials
-          env:
-            - name: JOB_COMPLETION_INDEX
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
+                --samples "${PIPELINE_SAMPLES}" \
+                --conversation-type "${PIPELINE_CONVERSATION_TYPE}" \
+                --max-turns "${PIPELINE_MAX_TURNS}" \
+                --job-name "pipeline-${DOMAIN}-s1000"
+          volumeMounts:
+            - name: pipeline-code
+              mountPath: /pipeline
           resources:
             requests:
               cpu: 500m
@@ -80,10 +118,9 @@ spec:
             limits:
               cpu: "2"
               memory: 4Gi
-          volumeMounts:
-            - name: output
-              mountPath: /app/outputs
       volumes:
-        - name: output
-          persistentVolumeClaim:
-            claimName: synthetic-puzzle-output
+        - name: pipeline-code
+          hostPath:
+            # Existing repository checkout on the Kubernetes node.
+            path: /home/aman/Synthetic-Games-Data-Generation
+            type: Directory
