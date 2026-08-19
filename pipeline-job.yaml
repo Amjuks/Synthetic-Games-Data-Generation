@@ -11,7 +11,7 @@ metadata:
 spec:
   completionMode: Indexed
   completions: 11
-  parallelism: 2
+  parallelism: 1
   ttlSecondsAfterFinished: 86400
   backoffLimit: 11
   template:
@@ -31,8 +31,6 @@ spec:
           imagePullPolicy: IfNotPresent
           workingDir: /pipeline
           env:
-            # LLM provider, endpoint, API key, model, and timeout are loaded
-            # from /pipeline/.env by the generator after it finds the repo.
             - name: PIPELINE_SAMPLES
               value: "1000"
             - name: PIPELINE_CONVERSATION_TYPE
@@ -105,6 +103,5 @@ spec:
       volumes:
         - name: pipeline-code
           hostPath:
-            # Existing repository checkout on the Kubernetes node.
             path: /home/aman/Synthetic-Games-Data-Generation
             type: Directory
