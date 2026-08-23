@@ -11,9 +11,11 @@ metadata:
 spec:
   completionMode: Indexed
   completions: 11
-  parallelism: 1
+  parallelism: 2
   ttlSecondsAfterFinished: 86400
-  backoffLimit: 11
+  # The container retries generator errors itself. This high limit also keeps
+  # Kubernetes retrying after pod-level failures such as eviction or node loss.
+  backoffLimit: 2147483647
   template:
     metadata:
       labels:
@@ -43,7 +45,7 @@ spec:
                   fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
           command:
             - /bin/sh
-            - -ec
+            - -c
           args:
             - |
               case "${JOB_COMPLETION_INDEX}" in
@@ -84,12 +86,28 @@ spec:
                 pip install --quiet -r requirements.txt
               fi
 
-              exec python -m src.generator.cli run \
-                --domain "${DOMAIN}" \
-                --samples "${PIPELINE_SAMPLES}" \
-                --conversation-type "${PIPELINE_CONVERSATION_TYPE}" \
-                --max-turns "${PIPELINE_MAX_TURNS}" \
-                --job-name "pipeline-${DOMAIN}-s1000"
+              attempt=0
+              while :; do
+                if python -m src.generator.cli run \
+                  --domain "${DOMAIN}" \
+                  --samples "${PIPELINE_SAMPLES}" \
+                  --conversation-type "${PIPELINE_CONVERSATION_TYPE}" \
+                  --max-turns "${PIPELINE_MAX_TURNS}" \
+                  --job-name "pipeline-${DOMAIN}-s1000"; then
+                  exit 0
+                else
+                  exit_code=$?
+                fi
+
+                attempt=$((attempt + 1))
+                if [ "${attempt}" -lt 10 ]; then
+                  delay_seconds=$((attempt * 30))
+                else
+                  delay_seconds=300
+                fi
+                echo "Generator failed for ${DOMAIN} (exit ${exit_code}); retry ${attempt} in ${delay_seconds}s. Resuming the same job state." >&2
+                sleep "${delay_seconds}"
+              done
           volumeMounts:
             - name: pipeline-code
               mountPath: /pipeline
