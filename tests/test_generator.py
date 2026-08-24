@@ -98,7 +98,7 @@ def make_config(output_path: str) -> dict:
 
 @pytest.mark.parametrize(
     ("domain", "task"),
-    (("othello", "next_best_move"), ("minesweeper", "next_best_move"), ("wordle", "next_best_guess")),
+    (("othello", "next_best_move"), ("minesweeper", "next_best_move"), ("wordle", "next_best_guess"), ("shikaku", "next_best_move"), ("futoshiki", "next_best_move"), ("kakurasu", "next_best_move"), ("sumplete", "next_best_move")),
 )
 def test_new_domains_generate_schema_compatible_single_turn_rows(tmp_path, domain, task):
     config = make_config(str(tmp_path / domain)) | {"domain": domain}

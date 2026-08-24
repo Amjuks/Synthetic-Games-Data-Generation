@@ -6,8 +6,8 @@ from src.generator.config import get_config
 from src.generator.domains import get_domain_adapter
 
 
-DOMAINS = ("sudoku", "kenken", "kakuro", "starbattle", "nonogram", "hitori", "nurikabe", "othello", "minesweeper", "wordle")
-NEW_DOMAINS = ("othello", "minesweeper", "wordle")
+DOMAINS = ("sudoku", "kenken", "kakuro", "starbattle", "nonogram", "hitori", "nurikabe", "shikaku", "futoshiki", "kakurasu", "sumplete", "othello", "minesweeper", "wordle")
+NEW_DOMAINS = ("othello", "minesweeper", "wordle", "shikaku", "futoshiki", "kakurasu", "sumplete")
 
 
 @pytest.mark.parametrize("domain", NEW_DOMAINS)

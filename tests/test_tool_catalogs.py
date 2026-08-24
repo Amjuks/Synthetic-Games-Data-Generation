@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from src.generator.config import get_config
+from src.generator.domain_support import (
+    PUZZLE_ROUTE_CATEGORIES,
+    PUZZLE_ROUTE_EDGES,
+    PUZZLE_ROUTE_MODES,
+)
 from src.generator.domains import SUPPORTED_DOMAINS, get_domain_adapter
 from src.generator.models import Scenario
 
 
-PUZZLE_DOMAINS = ("sudoku", "kenken", "kakuro", "starbattle", "nonogram", "hitori", "nurikabe", "othello", "minesweeper", "wordle")
+PUZZLE_DOMAINS = ("sudoku", "kenken", "kakuro", "starbattle", "nonogram", "hitori", "nurikabe", "shikaku", "futoshiki", "kakurasu", "sumplete", "othello", "minesweeper", "wordle")
+NEW_SOLVER_DOMAINS = ("shikaku", "futoshiki", "kakurasu", "sumplete")
 NEW_TOOL_OUTPUT_KEYS = {
     "sudoku": {
         "sudoku_unit_analysis": "units", "sudoku_naked_single_scan": "naked_singles",
@@ -45,6 +52,26 @@ NEW_TOOL_OUTPUT_KEYS = {
         "nurikabe_island_capacity_analysis": "islands", "nurikabe_island_separation_scan": "forced_sea_between_clues",
         "nurikabe_sea_connectivity_analysis": "component_count", "nurikabe_two_by_two_risk_scan": "forced_island_to_avoid_2x2",
         "nurikabe_solution_space_analysis": "solution_count_capped",
+    },
+    "shikaku": {
+        "shikaku_clue_area_analysis": "clues", "shikaku_exact_cover_analysis": "most_constrained_clue",
+        "shikaku_cell_ownership_analysis": "forced_ownership", "shikaku_move_impact_analysis": "eliminated_candidates",
+        "shikaku_solution_space_analysis": "solution_count_capped",
+    },
+    "futoshiki": {
+        "futoshiki_row_unit_analysis": "rows", "futoshiki_column_unit_analysis": "columns",
+        "futoshiki_inequality_chain_analysis": "chains", "futoshiki_move_impact_analysis": "eliminations",
+        "futoshiki_solution_space_analysis": "solution_count_capped",
+    },
+    "kakurasu": {
+        "kakurasu_row_pattern_analysis": "rows", "kakurasu_column_pattern_analysis": "columns",
+        "kakurasu_weight_contribution_analysis": "contributions", "kakurasu_move_impact_analysis": "eliminations",
+        "kakurasu_solution_space_analysis": "solution_count_capped",
+    },
+    "sumplete": {
+        "sumplete_row_subset_analysis": "rows", "sumplete_column_subset_analysis": "columns",
+        "sumplete_target_balance_analysis": "balances", "sumplete_move_impact_analysis": "eliminations",
+        "sumplete_solution_space_analysis": "solution_count_capped",
     },
     "othello": {
         "othello_legal_move_scan": "moves", "othello_mobility_analysis": "mobility",
@@ -96,3 +123,25 @@ def test_malformed_routes_use_diagnostics_without_solution_space(tmp_path, domai
     names = adapter._tool_bundle(malformed)
     assert any("validation" in name for name in names)
     assert not any("solution_space" in name or "solution_verification" in name for name in names)
+
+
+@pytest.mark.parametrize("domain", NEW_SOLVER_DOMAINS)
+def test_new_solver_domains_keep_every_registered_route_to_two_to_five_distinct_tools(
+    tmp_path, domain
+):
+    config = get_config()
+    config["output_path"] = str(tmp_path / domain)
+    adapter = get_domain_adapter(domain, config)
+
+    for category in PUZZLE_ROUTE_CATEGORIES:
+        for edge_case in PUZZLE_ROUTE_EDGES:
+            for tool_usage in PUZZLE_ROUTE_MODES:
+                scenario = SimpleNamespace(
+                    task_category=category,
+                    edge_case=edge_case,
+                    tool_usage=tool_usage,
+                )
+                names = adapter._tool_bundle(scenario)
+                assert 2 <= len(names) <= 5
+                assert len(names) == len(set(names))
+                assert set(names) <= set(adapter.tool_catalog)

@@ -26,6 +26,8 @@ PUZZLE_ROUTE_CATEGORIES = {
     "endgame_analysis", "solve_board", "probability_analysis", "flag_analysis",
     "chord_analysis", "next_best_guess", "feedback_check", "solve_word",
     "candidate_analysis", "opener_strategy", "hard_mode_check",
+    "rectangle_analysis", "inequality_analysis", "weighted_sum_analysis",
+    "subset_analysis",
 }
 PUZZLE_ROUTE_EDGES = {
     "none", "incorrect_assumption", "malformed_input", "invalid_board",
@@ -35,6 +37,7 @@ PUZZLE_ROUTE_EDGES = {
     "contradictory_flags", "impossible_state", "no_forced_move",
     "loss_state", "invalid_guess", "contradictory_feedback", "impossible_history",
     "hard_mode_violation", "repeated_guess", "exhausted_attempts",
+    "invalid_constraints", "invalid_targets",
 }
 PUZZLE_ROUTE_MODES = {
     "none", "candidate_scan", "row_column_box_check", "solution_verification",
@@ -44,6 +47,8 @@ PUZZLE_ROUTE_MODES = {
     "legal_move_scan", "move_application", "positional_analysis", "search",
     "frontier_scan", "probability_analysis", "flag_validation",
     "feedback_scoring", "candidate_filter", "entropy_analysis", "hard_mode_validation",
+    "rectangle_candidate_scan", "inequality_scan", "weighted_sum_scan",
+    "subset_sum_scan",
 }
 
 

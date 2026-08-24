@@ -373,6 +373,58 @@ defaults:
         tones: [neutral, friendly, urgent, frustrated, academic]
         edge_cases: [none, incorrect_assumption, invalid_grid, ambiguous_puzzle, unsolvable_puzzle, malformed_input]
         tool_usage_modes: [none, deduction_scan, constraint_check, solution_verification]
+    shikaku:
+      puzzles:
+        persistent_bank_filename: shikaku_puzzle_bank.jsonl
+        usage_stats_filename: shikaku_puzzle_usage.json
+      scenario:
+        task_categories: [next_best_move, validity_check, rules_explanation, solve_puzzle, rectangle_analysis, hint, mistake_correction, technique_discussion, beginner_question, advanced_question, general_chat]
+        difficulty_levels: [easy, medium, hard, expert]
+        user_expertise_levels: [beginner, intermediate, advanced, expert]
+        user_personalities: [careful, impatient, curious, skeptical, analytical]
+        assistant_styles: [concise, coaching, explanatory, Socratic, supportive]
+        tones: [neutral, friendly, urgent, frustrated, academic]
+        edge_cases: [none, incorrect_assumption, invalid_clues, ambiguous_puzzle, unsolvable_puzzle, malformed_input]
+        tool_usage_modes: [none, rectangle_candidate_scan, constraint_check, solution_verification]
+    futoshiki:
+      puzzles:
+        persistent_bank_filename: futoshiki_puzzle_bank.jsonl
+        usage_stats_filename: futoshiki_puzzle_usage.json
+      scenario:
+        task_categories: [next_best_move, validity_check, rules_explanation, solve_puzzle, inequality_analysis, hint, mistake_correction, technique_discussion, beginner_question, advanced_question, general_chat]
+        difficulty_levels: [easy, medium, hard, expert]
+        user_expertise_levels: [beginner, intermediate, advanced, expert]
+        user_personalities: [careful, impatient, curious, skeptical, analytical]
+        assistant_styles: [concise, coaching, explanatory, Socratic, supportive]
+        tones: [neutral, friendly, urgent, frustrated, academic]
+        edge_cases: [none, incorrect_assumption, invalid_constraints, ambiguous_puzzle, unsolvable_puzzle, malformed_input]
+        tool_usage_modes: [none, inequality_scan, constraint_check, solution_verification]
+    kakurasu:
+      puzzles:
+        persistent_bank_filename: kakurasu_puzzle_bank.jsonl
+        usage_stats_filename: kakurasu_puzzle_usage.json
+      scenario:
+        task_categories: [next_best_move, validity_check, rules_explanation, solve_puzzle, weighted_sum_analysis, hint, mistake_correction, technique_discussion, beginner_question, advanced_question, general_chat]
+        difficulty_levels: [easy, medium, hard, expert]
+        user_expertise_levels: [beginner, intermediate, advanced, expert]
+        user_personalities: [careful, impatient, curious, skeptical, analytical]
+        assistant_styles: [concise, coaching, explanatory, Socratic, supportive]
+        tones: [neutral, friendly, urgent, frustrated, academic]
+        edge_cases: [none, incorrect_assumption, invalid_targets, ambiguous_puzzle, unsolvable_puzzle, malformed_input]
+        tool_usage_modes: [none, weighted_sum_scan, constraint_check, solution_verification]
+    sumplete:
+      puzzles:
+        persistent_bank_filename: sumplete_puzzle_bank.jsonl
+        usage_stats_filename: sumplete_puzzle_usage.json
+      scenario:
+        task_categories: [next_best_move, validity_check, rules_explanation, solve_puzzle, subset_analysis, hint, mistake_correction, technique_discussion, beginner_question, advanced_question, general_chat]
+        difficulty_levels: [easy, medium, hard, expert]
+        user_expertise_levels: [beginner, intermediate, advanced, expert]
+        user_personalities: [careful, impatient, curious, skeptical, analytical]
+        assistant_styles: [concise, coaching, explanatory, Socratic, supportive]
+        tones: [neutral, friendly, urgent, frustrated, academic]
+        edge_cases: [none, incorrect_assumption, invalid_targets, ambiguous_puzzle, unsolvable_puzzle, malformed_input]
+        tool_usage_modes: [none, subset_sum_scan, constraint_check, solution_verification]
     othello:
       puzzles:
         persistent_bank_filename: othello_position_bank.jsonl

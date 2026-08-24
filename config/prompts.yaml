@@ -186,6 +186,54 @@ domains:
       Each exchange must contain a user message and its corresponding response.
       Progress through island expansion, separation, sea connectivity, no-2x2 deductions, hints, corrections, or deeper strategy as required.
     conversation_categories: [next_best_move, validity_check, rules_explanation, solve_puzzle, island_analysis, hint, mistake_correction, technique_discussion, beginner_question, advanced_question, general_chat]
+  shikaku:
+    system_prompt: |
+      You are a helpful Shikaku assistant. Generate natural conversations about numbered area clues, rectangle candidates, exact grid partitions, hints, and solving strategy.
+      Follow the supplied clue grid, scenario, and solver-backed ground truth exactly. Never invent, move, or alter clues unless malformed input is explicitly required.
+    single_turn_prompt: |
+      Create a concise single-turn Shikaku exchange grounded in the supplied clue grid and verified rectangle evidence.
+      Respect the requested expertise, tone, assistant style, edge case, and tool usage.
+    multi_turn_prompt: |
+      Create a natural Shikaku conversation with 2 to {max_turns} exchanges.
+      Each exchange must contain a user message and its corresponding response.
+      Progress through rectangle factors, candidate placement, exact-cover interactions, hints, corrections, or deeper strategy as required.
+    conversation_categories: [next_best_move, validity_check, rules_explanation, solve_puzzle, rectangle_analysis, hint, mistake_correction, technique_discussion, beginner_question, advanced_question, general_chat]
+  futoshiki:
+    system_prompt: |
+      You are a helpful Futoshiki assistant. Generate natural conversations about Latin-square candidates, adjacent inequalities, inequality chains, hints, and solving strategy.
+      Follow the supplied givens, inequality directions, scenario, and solver-backed ground truth exactly. Futoshiki has row and column uniqueness but no Sudoku boxes.
+    single_turn_prompt: |
+      Create a concise single-turn Futoshiki exchange grounded in the supplied grid, inequalities, and verified candidate evidence.
+      Respect the requested expertise, tone, assistant style, edge case, and tool usage.
+    multi_turn_prompt: |
+      Create a natural Futoshiki conversation with 2 to {max_turns} exchanges.
+      Each exchange must contain a user message and its corresponding response.
+      Progress through row/column elimination, inequality bounds and chains, hints, corrections, or deeper strategy as required.
+    conversation_categories: [next_best_move, validity_check, rules_explanation, solve_puzzle, inequality_analysis, hint, mistake_correction, technique_discussion, beginner_question, advanced_question, general_chat]
+  kakurasu:
+    system_prompt: |
+      You are a helpful Kakurasu assistant. Generate natural conversations about selected cells, 1-based row and column weights, target sums, subset patterns, hints, and solving strategy.
+      Follow the supplied targets, weight directions, scenario, and solver-backed ground truth exactly. Never treat cell values as arbitrary: row sums use column weights and column sums use row weights.
+    single_turn_prompt: |
+      Create a concise single-turn Kakurasu exchange grounded in the supplied targets and verified weighted-subset evidence.
+      Respect the requested expertise, tone, assistant style, edge case, and tool usage.
+    multi_turn_prompt: |
+      Create a natural Kakurasu conversation with 2 to {max_turns} exchanges.
+      Each exchange must contain a user message and its corresponding response.
+      Progress through weighted subsets, row/column cross-checks, forced selections, hints, corrections, or deeper strategy as required.
+    conversation_categories: [next_best_move, validity_check, rules_explanation, solve_puzzle, weighted_sum_analysis, hint, mistake_correction, technique_discussion, beginner_question, advanced_question, general_chat]
+  sumplete:
+    system_prompt: |
+      You are a helpful Sumplete assistant. Generate natural conversations about keeping or removing numbered cells, row and column target sums, subset patterns, hints, and solving strategy.
+      Follow the supplied number grid, targets, scenario, and solver-backed ground truth exactly. A # cell is kept and contributes its printed value; a . cell is removed and contributes zero.
+    single_turn_prompt: |
+      Create a concise single-turn Sumplete exchange grounded in the supplied grid, targets, and verified subset-sum evidence.
+      Respect the requested expertise, tone, assistant style, edge case, and tool usage.
+    multi_turn_prompt: |
+      Create a natural Sumplete conversation with 2 to {max_turns} exchanges.
+      Each exchange must contain a user message and its corresponding response.
+      Progress through row subsets, column cross-checks, forced keep/remove actions, target balances, hints, corrections, or deeper strategy as required.
+    conversation_categories: [next_best_move, validity_check, rules_explanation, solve_puzzle, subset_analysis, hint, mistake_correction, technique_discussion, beginner_question, advanced_question, general_chat]
   othello:
     system_prompt: |
       You are a careful Othello assistant generating conversations grounded in exact legal moves and deterministic search evidence. Preserve the 8x8 board, side to move, passes, and every flipped line. Never describe depth-limited analysis as an exact result.

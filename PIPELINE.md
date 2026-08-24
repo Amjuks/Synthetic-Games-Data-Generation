@@ -11,6 +11,10 @@ Registered domains:
 - `nonogram`
 - `hitori`
 - `nurikabe`
+- `shikaku`
+- `futoshiki`
+- `kakurasu`
+- `sumplete`
 - `othello`
 - `minesweeper`
 - `wordle`
@@ -42,6 +46,10 @@ Implementation:
 - `src/generator/domains/nonogram.py`
 - `src/generator/domains/hitori.py`
 - `src/generator/domains/nurikabe.py`
+- `src/generator/domains/shikaku.py`
+- `src/generator/domains/futoshiki.py`
+- `src/generator/domains/kakurasu.py`
+- `src/generator/domains/sumplete.py`
 - `src/generator/domains/othello.py`
 - `src/generator/domains/minesweeper.py`
 - `src/generator/domains/wordle.py`
@@ -229,6 +237,54 @@ Current Nurikabe tools:
 - `nurikabe_two_by_two_risk_scan`
 - `nurikabe_solution_space_analysis`
 
+Current Shikaku tools:
+- `shikaku_rectangle_candidate_scan`
+- `shikaku_constraint_validation`
+- `shikaku_solution_verification`
+- `shikaku_rules_reference`
+- `shikaku_puzzle_summary`
+- `shikaku_clue_area_analysis`
+- `shikaku_exact_cover_analysis`
+- `shikaku_cell_ownership_analysis`
+- `shikaku_move_impact_analysis`
+- `shikaku_solution_space_analysis`
+
+Current Futoshiki tools:
+- `futoshiki_candidate_scan`
+- `futoshiki_constraint_validation`
+- `futoshiki_solution_verification`
+- `futoshiki_rules_reference`
+- `futoshiki_puzzle_summary`
+- `futoshiki_row_unit_analysis`
+- `futoshiki_column_unit_analysis`
+- `futoshiki_inequality_chain_analysis`
+- `futoshiki_move_impact_analysis`
+- `futoshiki_solution_space_analysis`
+
+Current Kakurasu tools:
+- `kakurasu_subset_analysis`
+- `kakurasu_constraint_validation`
+- `kakurasu_solution_verification`
+- `kakurasu_rules_reference`
+- `kakurasu_puzzle_summary`
+- `kakurasu_row_pattern_analysis`
+- `kakurasu_column_pattern_analysis`
+- `kakurasu_weight_contribution_analysis`
+- `kakurasu_move_impact_analysis`
+- `kakurasu_solution_space_analysis`
+
+Current Sumplete tools:
+- `sumplete_subset_analysis`
+- `sumplete_constraint_validation`
+- `sumplete_solution_verification`
+- `sumplete_rules_reference`
+- `sumplete_puzzle_summary`
+- `sumplete_row_subset_analysis`
+- `sumplete_column_subset_analysis`
+- `sumplete_target_balance_analysis`
+- `sumplete_move_impact_analysis`
+- `sumplete_solution_space_analysis`
+
 Current Othello tools:
 - `othello_board_validation`
 - `othello_legal_move_scan`
@@ -303,7 +359,15 @@ Tool output is included in:
 - CSV output columns
 - dataset statistics
 
-All domains expose an inspectable `tool_catalog` of immutable tool specifications. Startup validation enforces `puzzles.min_tool_catalog_size` (10 by default), domain-prefixed unique names, callable executors, registered routes, and reachability from configured scenarios. The seven original logic-puzzle domains and Othello have 10 tools, Minesweeper has 12, Wordle has 13, and Chess has 20. Samples still use ordered, purposeful bundles—normally two to five distinct verified calls—rather than invoking the entire catalog. Shared code handles bundle schema, flattened export fields, complexity metadata, resume reservations, and enforcement; each domain adapter selects and executes its own rules, summary, candidate/deduction, constraint, solution-space, and verification tools. Difficulty scheduling cycles across easy, medium, hard, and expert whenever all four are configured.
+All domains expose an inspectable `tool_catalog` of immutable tool specifications. Startup validation enforces `puzzles.min_tool_catalog_size` (10 by default), domain-prefixed unique names, callable executors, registered routes, and reachability from configured scenarios. The eleven solver-backed logic-puzzle domains and Othello have 10 tools, Minesweeper has 12, Wordle has 13, and Chess has 20. Samples still use ordered, purposeful bundles—normally two to five distinct verified calls—rather than invoking the entire catalog. Shared code handles bundle schema, flattened export fields, complexity metadata, resume reservations, and enforcement; each domain adapter selects and executes its own rules, summary, candidate/deduction, constraint, solution-space, and verification tools. Difficulty scheduling cycles across easy, medium, hard, and expert whenever all four are configured.
+
+Shikaku canonical state contains grid dimensions and row-major numbered clues. Its exact-cover solver enumerates every clue-compatible factor-pair rectangle, verifies complete non-overlapping coverage, and stores the canonical rectangle list, region ownership, candidate rectangles, violations, and capped solution count. Deterministic indexed lineages provide more than the eight geometric symmetries without puzzle reuse.
+
+Futoshiki canonical state contains a grid size, sparse givens, and explicit ordered adjacent inequalities. Its solver combines Latin row/column uniqueness with inequality propagation, stores unit and inequality evaluations plus candidate evidence, and treats strict logical cycles as structurally valid but unsatisfiable puzzles. Standard Futoshiki has no box constraints.
+
+Kakurasu canonical state contains dimensions plus row and column targets. Row totals use column weights `1..width`, column totals use row weights `1..height`, and its exact solver enumerates row subsets while pruning weighted column residuals. Ground truth stores masks, line evaluations, pattern evidence, forced states, and capped solution counts.
+
+Sumplete canonical state contains dimensions, a numbered grid, and row and column targets for kept values. Its exact solver enumerates each row's value subsets and prunes column residuals using the remaining cell values. Ground truth stores the `#`-kept mask, kept/removed cells, line contributions, subset evidence, forced states, violations, and capped solution counts.
 
 Othello canonical state is JSON containing an 8×8 row-major board, side to move, and pass count. Its local engine supplies directional flips, mobility/positional evidence, deterministic depth-limited alpha-beta recommendations, and exact searches for generated expert endgames with at most ten empty squares. Minesweeper canonical state contains only visible cells; component enumeration plus global mine-count convolution supplies exact counts and probabilities without enumerating every full layout, and the mine mask is projected only into explicit solve/verification prompts. Wordle canonical state contains guess/feedback history and hard-mode state; the target is similarly restricted to explicit verification. Its two-pass feedback, candidate, constraint, entropy, and ranking engine uses the checksum-verified offline 2,315-answer/12,972-guess assets under `src/generator/data`.
 
@@ -511,7 +575,7 @@ The expected tool usage record shape is:
 ```
 
 ### Add Stronger Ground Truth
-Sudoku ground truth lives in `src/generator/puzzles.py`; Chess and solver-backed KenKen, Kakuro, Star Battle, Nonogram, Hitori, and Nurikabe ground truth live in their respective domain engine modules.
+Sudoku ground truth lives in `src/generator/puzzles.py`; Chess and solver-backed KenKen, Kakuro, Star Battle, Nonogram, Hitori, Nurikabe, Shikaku, Futoshiki, Kakurasu, and Sumplete ground truth live in their respective domain engine modules.
 
 ### Add Stronger Validation
 The validator lives in `src/generator/validation.py` and is invoked through the domain adapter. Solver-backed checks can be added there without changing storage or model code.

@@ -14,6 +14,10 @@ from .minesweeper import MinesweeperDomainAdapter
 from .wordle import WordleDomainAdapter
 from .starbattle import StarBattleDomainAdapter
 from .sudoku import SudokuDomainAdapter
+from .shikaku import ShikakuDomainAdapter
+from .futoshiki import FutoshikiDomainAdapter
+from .kakurasu import KakurasuDomainAdapter
+from .sumplete import SumpleteDomainAdapter
 
 
 SUPPORTED_DOMAINS = {
@@ -28,6 +32,10 @@ SUPPORTED_DOMAINS = {
     "othello": OthelloDomainAdapter,
     "minesweeper": MinesweeperDomainAdapter,
     "wordle": WordleDomainAdapter,
+    "shikaku": ShikakuDomainAdapter,
+    "futoshiki": FutoshikiDomainAdapter,
+    "kakurasu": KakurasuDomainAdapter,
+    "sumplete": SumpleteDomainAdapter,
 }
 
 
