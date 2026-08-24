@@ -547,6 +547,8 @@ class ChessProblemManager:
         self.snapshots_per_lineage = min(4, max(1, int(puzzle_config.get("snapshots_per_lineage", 4))))
         self.reserved_inputs: set[str] = set()
         self.reserved_states: set[str] = set()
+        self.accepted_inputs: set[str] = set()
+        self.accepted_states: set[str] = set()
         if self.bank_path.exists():
             self.lineages = []
             self.base_bank = self._load_bank()
@@ -562,10 +564,14 @@ class ChessProblemManager:
             puzzle = record.get("puzzle_metadata", {})
             metadata = record.get("metadata", {})
             if puzzle.get("puzzle"):
-                self.reserved_inputs.add(hashlib.sha256(str(puzzle["puzzle"]).encode("utf-8")).hexdigest())
+                input_signature = hashlib.sha256(str(puzzle["puzzle"]).encode("utf-8")).hexdigest()
+                self.accepted_inputs.add(input_signature)
+                self.reserved_inputs.add(input_signature)
             signature = metadata.get("canonical_state_signature") or puzzle.get("metadata", {}).get("canonical_state_signature")
             if signature:
-                self.reserved_states.add(str(signature))
+                state_signature = str(signature)
+                self.accepted_states.add(state_signature)
+                self.reserved_states.add(state_signature)
 
     def select_puzzle(self, scenario: Scenario, sample_index: int) -> PuzzleRecord:
         if scenario.edge_case != "none":
@@ -597,8 +603,16 @@ class ChessProblemManager:
             candidates = [p for p in self.base_bank if p.metadata.get("input_type") == input_type and self._is_available(p)]
             candidates.sort(key=lambda p: (self.usage_stats.get(p.puzzle_id, 0), self.usage_stats.get(p.parent_puzzle_id or "", 0), p.puzzle_id))
         if not candidates:
-            raise RuntimeError("Chess catalog extension produced no unique compatible position; refusing to reuse a board.")
+            candidates = [p for p in self.base_bank if p.metadata.get("input_type") == input_type]
+            candidates.sort(key=lambda p: (self.usage_stats.get(p.puzzle_id, 0), p.puzzle_id))
+            if not candidates:
+                raise RuntimeError("Chess catalog contains no compatible position.")
+            selected = candidates[record_slot % len(candidates)]
+            selected.metadata["reused_in_job"] = True
+            self._reserve(selected)
+            return selected
         selected = candidates[record_slot % len(candidates)]
+        selected.metadata["reused_in_job"] = False
         self._reserve(selected)
         return selected
 
@@ -763,6 +777,7 @@ class ChessProblemManager:
 
     def _edge_record(self, scenario: Scenario, sample_index: int) -> PuzzleRecord:
         record_slot = int(scenario.metadata.get("record_slot", sample_index))
+        reused_base = False
         bases = [
             p for p in self.base_bank
             if p.metadata.get("input_type") == "fen"
@@ -777,7 +792,11 @@ class ChessProblemManager:
             bases = [p for p in self.base_bank if p.metadata.get("input_type") == "fen" and self._is_available(p)]
             bases.sort(key=lambda p: (self.usage_stats.get(p.parent_puzzle_id or "", 0), p.puzzle_id))
         if not bases:
-            raise RuntimeError("Chess catalog extension produced no unique edge-case base; refusing to reuse a board.")
+            bases = [p for p in self.base_bank if p.metadata.get("input_type") == "fen"]
+            bases.sort(key=lambda p: (self.usage_stats.get(p.parent_puzzle_id or "", 0), p.puzzle_id))
+            if not bases:
+                raise RuntimeError("Chess catalog contains no FEN base for edge-case generation.")
+            reused_base = True
         base = bases[record_slot % len(bases)]
         lineage_id = base.parent_puzzle_id or base.puzzle_id
         edge = scenario.edge_case
@@ -833,7 +852,7 @@ class ChessProblemManager:
         puzzle_id = hashlib.sha1(f"{lineage_id}|{edge}|{sample_index}".encode()).hexdigest()[:16]
         input_signature = hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
         truth = {"validity_status": status, "verification_status": "verified_invalid_or_incomplete", "input_type": payload["input_type"], "current_fen": None, "base_fen": fen, "side_to_move": None, "mutation": mutation, "errors": [f"Input is {status}; do not infer a complete board."]}
-        record = PuzzleRecord(puzzle_id=puzzle_id, puzzle=json.dumps(payload, sort_keys=True), solution="", difficulty=base.difficulty, num_clues=0, required_strategies=["input_validation"], unique_solution_status=False, source="programmatic_edge_case", canonical_signature=input_signature, usage_count=0, parent_puzzle_id=lineage_id, transformation=f"{edge}_{mutation['type']}", rendered_board=rendered, ground_truth=truth, metadata={"input_type": payload["input_type"], "notation_format": payload.get("notation_format", "unknown"), "side_to_move": None, "lineage_id": lineage_id, "dataset_split": split_for_lineage(lineage_id), "edge_case_kind": edge, "edge_mutation_type": mutation["type"], "canonical_state_signature": canonical_state_signature(fen), "input_signature": input_signature, "position_phase": base.metadata.get("position_phase"), "complexity_score": base.metadata.get("complexity_score"), "complexity_band": base.difficulty, "motif_theme": "input_diagnosis", "catalog_version": self.catalog_version, "verification_status": "verified_invalid_or_incomplete"})
+        record = PuzzleRecord(puzzle_id=puzzle_id, puzzle=json.dumps(payload, sort_keys=True), solution="", difficulty=base.difficulty, num_clues=0, required_strategies=["input_validation"], unique_solution_status=False, source="programmatic_edge_case", canonical_signature=input_signature, usage_count=0, parent_puzzle_id=lineage_id, transformation=f"{edge}_{mutation['type']}", rendered_board=rendered, ground_truth=truth, metadata={"input_type": payload["input_type"], "notation_format": payload.get("notation_format", "unknown"), "side_to_move": None, "lineage_id": lineage_id, "dataset_split": split_for_lineage(lineage_id), "edge_case_kind": edge, "edge_mutation_type": mutation["type"], "canonical_state_signature": canonical_state_signature(fen), "input_signature": input_signature, "position_phase": base.metadata.get("position_phase"), "complexity_score": base.metadata.get("complexity_score"), "complexity_band": base.difficulty, "motif_theme": "input_diagnosis", "catalog_version": self.catalog_version, "verification_status": "verified_invalid_or_incomplete", "reused_in_job": reused_base})
         self._reserve(record)
         return record
 
@@ -858,6 +877,23 @@ class ChessProblemManager:
         self.reserved_inputs.add(hashlib.sha256(puzzle.puzzle.encode("utf-8")).hexdigest())
         signature = puzzle.metadata.get("canonical_state_signature")
         if signature:
+            self.reserved_states.add(str(signature))
+
+    def release(self, puzzle: PuzzleRecord) -> None:
+        input_signature = hashlib.sha256(puzzle.puzzle.encode("utf-8")).hexdigest()
+        if input_signature not in self.accepted_inputs:
+            self.reserved_inputs.discard(input_signature)
+        signature = puzzle.metadata.get("canonical_state_signature")
+        if signature and str(signature) not in self.accepted_states:
+            self.reserved_states.discard(str(signature))
+
+    def accept(self, puzzle: PuzzleRecord) -> None:
+        input_signature = hashlib.sha256(puzzle.puzzle.encode("utf-8")).hexdigest()
+        self.accepted_inputs.add(input_signature)
+        self.reserved_inputs.add(input_signature)
+        signature = puzzle.metadata.get("canonical_state_signature")
+        if signature:
+            self.accepted_states.add(str(signature))
             self.reserved_states.add(str(signature))
 
     def _illegal_san(self, board: chess.Board, seed: int) -> str:

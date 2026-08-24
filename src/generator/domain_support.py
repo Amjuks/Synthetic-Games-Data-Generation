@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from copy import deepcopy
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Callable, Iterable
@@ -191,7 +192,11 @@ class VariedDomainSupport:
     """Shared lifecycle/schema mechanics; domain adapters still choose and run tools."""
 
     def _initialize_variety_support(self) -> None:
+        self._accepted_puzzle_ids: set[str] = set()
+        self._leased_puzzle_ids: set[str] = set()
         self._reserved_puzzle_ids: set[str] = set()
+        self._puzzle_selection_counts: dict[str, int] = {}
+        self._exhausted_variant_pools: dict[tuple[str, str, str, str], list[PuzzleRecord]] = {}
         validate_tool_catalog(self)
 
     def catalog_route_names(self) -> set[str]:
@@ -218,22 +223,81 @@ class VariedDomainSupport:
         return routed
 
     def prepare_job(self, *, job_dir: Any, accepted_history: list[dict[str, Any]], rejected_history: list[dict[str, Any]]) -> None:
-        del job_dir
-        for record in [*accepted_history, *rejected_history]:
+        del job_dir, rejected_history
+        # Only accepted dataset rows consume uniqueness. Rejected attempts are
+        # not part of the dataset and must not permanently shrink the pool on
+        # resume.
+        for record in accepted_history:
             puzzle_id = record.get("puzzle_id") or record.get("puzzle_metadata", {}).get("puzzle_id")
             if puzzle_id:
-                self._reserved_puzzle_ids.add(str(puzzle_id))
+                key = str(puzzle_id)
+                self._accepted_puzzle_ids.add(key)
+                self._reserved_puzzle_ids.add(key)
+                self._puzzle_selection_counts[key] = self._puzzle_selection_counts.get(key, 0) + 1
 
     def _select_varied_problem(self, scenario: Scenario, sample_index: int) -> PuzzleRecord:
-        for offset in range(64):
+        route = (
+            str(scenario.difficulty),
+            str(scenario.edge_case),
+            str(scenario.task_category),
+            str(scenario.tool_usage),
+        )
+        exhausted_pool = self._exhausted_variant_pools.get(route)
+        if exhausted_pool:
+            return self._select_balanced_reuse(scenario, exhausted_pool)
+
+        scan_limit = max(1, int(self.config.get("puzzles", {}).get("variant_scan_limit", 256)))
+        discovered: dict[str, PuzzleRecord] = {}
+        for offset in range(scan_limit):
             puzzle = self.puzzle_manager.select_puzzle(scenario, sample_index + offset)
-            if puzzle.puzzle_id in self._reserved_puzzle_ids:
+            discovered.setdefault(puzzle.puzzle_id, deepcopy(puzzle))
+            if puzzle.puzzle_id in self._accepted_puzzle_ids or puzzle.puzzle_id in self._leased_puzzle_ids:
                 continue
-            self._reserved_puzzle_ids.add(puzzle.puzzle_id)
-            add_complexity_metadata(puzzle)
-            scenario.difficulty = puzzle.difficulty
-            return puzzle
-        raise RuntimeError(f"{self.name} puzzle variants exhausted; refusing to reuse a puzzle in the same job.")
+            return self._finalize_problem_selection(scenario, puzzle, reused=False)
+
+        if not discovered:
+            raise RuntimeError(f"{self.name} puzzle manager returned no variants for the selected route.")
+        if not bool(self.config.get("puzzles", {}).get("allow_balanced_reuse", True)):
+            raise RuntimeError(f"{self.name} puzzle variants exhausted and balanced reuse is disabled.")
+        pool = list(discovered.values())
+        self._exhausted_variant_pools[route] = pool
+        return self._select_balanced_reuse(scenario, pool)
+
+    def _select_balanced_reuse(self, scenario: Scenario, pool: list[PuzzleRecord]) -> PuzzleRecord:
+        puzzle = deepcopy(min(
+            pool,
+            key=lambda item: (
+                self._puzzle_selection_counts.get(item.puzzle_id, 0),
+                getattr(self.puzzle_manager, "usage_stats", {}).get(item.puzzle_id, 0),
+                item.puzzle_id,
+            ),
+        ))
+        return self._finalize_problem_selection(scenario, puzzle, reused=True)
+
+    def _finalize_problem_selection(self, scenario: Scenario, puzzle: PuzzleRecord, *, reused: bool) -> PuzzleRecord:
+        previous_selections = self._puzzle_selection_counts.get(puzzle.puzzle_id, 0)
+        self._puzzle_selection_counts[puzzle.puzzle_id] = previous_selections + 1
+        self._leased_puzzle_ids.add(puzzle.puzzle_id)
+        self._reserved_puzzle_ids.add(puzzle.puzzle_id)
+        puzzle.metadata.update({
+            "reused_in_job": reused,
+            "job_selection_number": previous_selections + 1,
+        })
+        add_complexity_metadata(puzzle)
+        scenario.difficulty = puzzle.difficulty
+        return puzzle
+
+    def release_problem(self, puzzle: PuzzleRecord) -> None:
+        """Release a rejected attempt; only accepted rows consume uniqueness."""
+        self._leased_puzzle_ids.discard(puzzle.puzzle_id)
+        if puzzle.puzzle_id not in self._accepted_puzzle_ids:
+            self._reserved_puzzle_ids.discard(puzzle.puzzle_id)
+
+    def accept_problem(self, puzzle: PuzzleRecord) -> None:
+        """Promote a temporary selection lease to accepted job history."""
+        self._leased_puzzle_ids.discard(puzzle.puzzle_id)
+        self._accepted_puzzle_ids.add(puzzle.puzzle_id)
+        self._reserved_puzzle_ids.add(puzzle.puzzle_id)
 
     def sample_metadata(self, scenario: Scenario, puzzle: PuzzleRecord, tool_usage: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -248,6 +312,8 @@ class VariedDomainSupport:
             "tool_bundle_signature": puzzle.metadata.get("tool_bundle_signature"),
             "verification_status": tool_usage.get("verification_status"),
             "transformation": puzzle.transformation,
+            "reused_in_job": puzzle.metadata.get("reused_in_job", False),
+            "job_selection_number": puzzle.metadata.get("job_selection_number", 1),
         }
 
     def tool_validation_errors(self, puzzle: PuzzleRecord) -> list[str]:

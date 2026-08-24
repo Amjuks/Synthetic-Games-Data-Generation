@@ -283,7 +283,8 @@ class ChessDomainAdapter:
         validate_tool_catalog(self)
 
     def prepare_job(self, *, job_dir: Any, accepted_history: list[dict[str, Any]], rejected_history: list[dict[str, Any]]) -> None:
-        self.puzzle_manager.reserve_history([*accepted_history, *rejected_history])
+        del job_dir, rejected_history
+        self.puzzle_manager.reserve_history(accepted_history)
 
     def generate_scenario(self, **kwargs: Any) -> Scenario:
         return self.scenario_generator.generate(**kwargs)
@@ -303,6 +304,12 @@ class ChessDomainAdapter:
 
     def mark_problem_used(self, puzzle: PuzzleRecord) -> None:
         self.puzzle_manager.mark_used(puzzle)
+
+    def release_problem(self, puzzle: PuzzleRecord) -> None:
+        self.puzzle_manager.release(puzzle)
+
+    def accept_problem(self, puzzle: PuzzleRecord) -> None:
+        self.puzzle_manager.accept(puzzle)
 
     def maybe_use_tool(self, scenario: Scenario, puzzle: PuzzleRecord) -> dict[str, Any]:
         required = self._required_tools(scenario, puzzle)
@@ -420,6 +427,7 @@ class ChessDomainAdapter:
             "tool_count": puzzle.metadata.get("tool_count", 0),
             "tool_bundle_signature": puzzle.metadata.get("tool_bundle_signature"),
             "catalog_version": puzzle.metadata.get("catalog_version"),
+            "reused_in_job": puzzle.metadata.get("reused_in_job", False),
         }
 
     def flatten_sample_row(self, row: dict[str, Any], sample: dict[str, Any]) -> dict[str, Any]:

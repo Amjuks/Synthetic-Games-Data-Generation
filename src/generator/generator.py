@@ -340,6 +340,7 @@ class ConversationGenerator:
                 validation_result.errors.extend(tool_validator(puzzle))
                 validation_result.is_valid = not validation_result.errors
             if not validation_result.is_valid:
+                self._release_problem(puzzle)
                 rejected_count += 1
                 rejection = self._build_rejection_record(
                     sample_index=sample_index,
@@ -380,6 +381,7 @@ class ConversationGenerator:
                 candidate_dict["metadata"].update(metadata_projector(scenario, puzzle, tool_usage))
             similarity_result = self.diversity_checker.assess(candidate_dict, history)
             if not similarity_result.accepted:
+                self._release_problem(puzzle)
                 rejected_count += 1
                 rejection = self._build_rejection_record(
                     sample_index=sample_index,
@@ -398,6 +400,9 @@ class ConversationGenerator:
 
             candidate_dict["similarity_score"] = similarity_result.similarity_score
             storage.append_sample(candidate_dict)
+            accept = getattr(self.domain, "accept_problem", None)
+            if callable(accept):
+                accept(puzzle)
             self.domain.mark_problem_used(puzzle)
             return candidate_dict, rejected_count
 
@@ -407,6 +412,11 @@ class ConversationGenerator:
             f"Last rejection: {self._rejection_summary(rejection_reasons)}. "
             f"See {storage.rejected_path} for complete details."
         )
+
+    def _release_problem(self, puzzle: PuzzleRecord) -> None:
+        release = getattr(self.domain, "release_problem", None)
+        if callable(release):
+            release(puzzle)
 
     def _rejection_summary(self, rejections: list[dict[str, Any]]) -> str:
         if not rejections:
