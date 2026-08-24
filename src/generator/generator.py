@@ -534,6 +534,9 @@ class ConversationGenerator:
             f"Puzzle board:\n{puzzle.rendered_board}\n\n"
             f"Output schema:\n{output_schema}\n"
             f"{self.domain.generation_guidance()}\n"
+            f"Diversity key: {scenario.scenario_id}. Use this key only to choose distinctive wording, "
+            "an uncommon but natural opening, and a different explanation order or conversational progression. "
+            "Do not copy the key into the output. Avoid generic reusable boilerplate.\n"
             "Do not return the puzzle board, category, or conversation type; the pipeline attaches those fields.\n"
         )
         if self.max_prompt_characters > 0 and len(prompt) > self.max_prompt_characters:

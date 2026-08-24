@@ -7,7 +7,7 @@ defaults:
   job_name: null
   generation:
     random_seed: 17
-    max_regeneration_attempts: 3
+    max_regeneration_attempts: 12
     max_prompt_characters: 50000
   model:
     provider: openai

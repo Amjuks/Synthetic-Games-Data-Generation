@@ -173,3 +173,40 @@ def test_similarity_checker_allows_same_puzzle_with_distinct_conversation(tmp_pa
     assert result.accepted is True
     assert result.metrics["puzzle_similarity"] == 1.0
     assert result.similarity_score < 1.0
+
+
+def test_contextual_similarity_cannot_reject_distinct_text_by_itself(tmp_path):
+    config = make_config(str(tmp_path))
+    config["similarity"].update({
+        "ngram_overlap_threshold": 1.1,
+        "embedding_similarity_threshold": 1.1,
+        "structural_similarity_threshold": 1.0,
+        "scenario_similarity_threshold": 1.0,
+        "puzzle_similarity_threshold": 1.0,
+        "contextual_similarity_text_floor": 0.0,
+    })
+    checker = SimilarityDiversityChecker(config)
+    history = [{
+        "scenario": {"task_category": "hint", "conversation_type": "multi_turn"},
+        "puzzle_metadata": {"puzzle_id": "same-puzzle"},
+        "output": {
+            "conversation_type": "multi_turn",
+            "board": "board",
+            "messages": [{"user": "Where should I begin?", "response": "Inspect the center."}],
+        },
+    }]
+    candidate = {
+        "scenario": {"task_category": "hint", "conversation_type": "multi_turn"},
+        "puzzle_metadata": {"puzzle_id": "same-puzzle"},
+        "output": {
+            "conversation_type": "multi_turn",
+            "board": "board",
+            "messages": [{"user": "Which candidates matter?", "response": "Compare the corner cells."}],
+        },
+    }
+
+    result = checker.assess(candidate, history)
+
+    assert result.accepted is True
+    assert result.metrics["structural_similarity"] == 1.0
+    assert result.metrics["puzzle_similarity"] == 1.0

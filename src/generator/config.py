@@ -66,6 +66,22 @@ def get_config() -> dict[str, Any]:
         model_config["max_tokens"] = _get_int_env("TENSORSTUDIO_MAX_TOKENS", model_config.get("max_tokens", 800))
         model_config["timeout"] = _get_float_env("TENSORSTUDIO_TIMEOUT", model_config.get("timeout", 300))
         model_config["session_id"] = get_env_or_default("TENSORSTUDIO_SESSION_ID", model_config.get("session_id"))
+    elif provider == "litellm":
+        model_config["api_key"] = get_env_or_default("LITELLM_API_KEY", model_config.get("api_key"))
+        model_config["base_url"] = get_env_or_default(
+            "LITELLM_BASE_URL",
+            "http://litellm-proxy.llm-logging.svc.cluster.local:4000/v1",
+        )
+        model_config["model_name"] = get_env_or_default(
+            "LITELLM_MODEL",
+            "nemotron-super-free",
+        )
+        model_config["temperature"] = _get_float_env(
+            "LITELLM_TEMPERATURE",
+            0.7,
+        )
+        model_config["max_tokens"] = _get_int_env("LITELLM_MAX_TOKENS", 256)
+        model_config["timeout"] = _get_float_env("LITELLM_TIMEOUT", 120)
     else:
         model_config["api_key"] = get_env_or_default("OPENAI_API_KEY", model_config.get("api_key"))
         model_config["base_url"] = get_env_or_default("OPENAI_BASE_URL", model_config.get("base_url"))

@@ -82,8 +82,17 @@ class SimilarityDiversityChecker:
                 for name in ("structural_similarity", "scenario_similarity", "puzzle_similarity")
                 if metrics[name] >= self.thresholds.get(name, 1.1)
             ]
+            # Structure, scenario fields, and puzzle lineage all come from
+            # deliberately finite schemas. They inevitably repeat in large
+            # jobs and therefore cannot prove that two conversations are
+            # duplicates. Keep them as supporting diagnostics only after an
+            # actual text threshold has been crossed.
             text_support = max(ngram_overlap, embedding_similarity)
-            reasons = text_reasons + (contextual_reasons if text_support >= self.contextual_text_floor else [])
+            reasons = text_reasons + (
+                contextual_reasons
+                if text_reasons and text_support >= self.contextual_text_floor
+                else []
+            )
             score = max(metrics[name] for name in text_metric_names)
             if score > best_score:
                 best_score = score

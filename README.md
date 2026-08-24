@@ -68,7 +68,7 @@ The project loads `.env` automatically from the repository root.
 
 | Name | Description | Type | Default | Allowed values | Required |
 |---|---|---:|---|---|---|
-| `MODEL_PROVIDER` | Selects the model backend. | string | `openai` | `openai`, `custom_chat`, `tensorstudio` | Optional |
+| `MODEL_PROVIDER` | Selects the model backend. | string | `openai` | `openai`, `custom_chat`, `tensorstudio`, `litellm` | Optional |
 
 #### OpenAI settings
 
@@ -105,6 +105,17 @@ The project loads `.env` automatically from the repository root.
 | `TENSORSTUDIO_MAX_TOKENS` | Maximum tokens sent as `max_tokens`. | int | `800` | positive integers | Optional |
 | `TENSORSTUDIO_TIMEOUT` | Request timeout in seconds. TensorStudio can be slower for large generations. | float | `300` | positive numbers | Optional |
 | `TENSORSTUDIO_SESSION_ID` | Optional value sent as `metadata.session_id`. | string | none | any string | Optional |
+
+#### LiteLLM OpenAI-compatible settings
+
+| Name | Description | Type | Default | Allowed values | Required |
+|---|---|---:|---|---|---|
+| `LITELLM_BASE_URL` | OpenAI-compatible LiteLLM base URL. | string | `http://litellm-proxy.llm-logging.svc.cluster.local:4000/v1` | valid URL | Optional |
+| `LITELLM_API_KEY` | LiteLLM API key. | string | none | any valid key | Required for `litellm` |
+| `LITELLM_MODEL` | Model name sent to LiteLLM. | string | `nemotron-super-free` | any model configured in LiteLLM | Optional |
+| `LITELLM_TEMPERATURE` | Sampling temperature. | float | `0.7` | provider-dependent | Optional |
+| `LITELLM_MAX_TOKENS` | Maximum tokens sent as `max_tokens`. | int | `256` | positive integers | Optional |
+| `LITELLM_TIMEOUT` | Request timeout in seconds. | float | `120` | positive numbers | Optional |
 
 ### Configuration Files
 - [config/defaults.yaml](C:/Users/emertxe-87/Desktop/Synthetic%20Sudoku%20Dataset/config/defaults.yaml): shared runtime defaults and domain profiles for generation, scenarios, puzzles, and storage.
@@ -193,7 +204,7 @@ The following sections are read from [config/defaults.yaml](C:/Users/emertxe-87/
 | Name | Description | Type | Default | Allowed values | Required |
 |---|---|---:|---|---|---|
 | `random_seed` | Base seed for scenario and puzzle variation. | int | `17` | integers | Optional |
-| `max_regeneration_attempts` | Maximum attempts per sample variant before raising an error. | int | `3` | positive integers | Optional |
+| `max_regeneration_attempts` | Maximum attempts per sample variant before raising an error. The larger default tolerates transient validation or genuine text-similarity collisions. | int | `12` | positive integers | Optional |
 
 #### `model`
 
@@ -230,9 +241,9 @@ The following sections are read from [config/defaults.yaml](C:/Users/emertxe-87/
 | `normalized_duplicate_threshold` | Threshold for whitespace/lowercase normalized duplicates. | float | `1.0` | `0.0` to `1.0` | Optional |
 | `ngram_overlap_threshold` | Threshold for n-gram Jaccard similarity. | float | `0.92` | `0.0` to `1.0` | Optional |
 | `embedding_similarity_threshold` | Threshold for token-vector cosine similarity. | float | `0.96` | `0.0` to `1.0` | Optional |
-| `structural_similarity_threshold` | Threshold for structural similarity. | float | `0.97` | `0.0` to `1.0` | Optional |
-| `scenario_similarity_threshold` | Threshold for scenario field overlap. | float | `0.95` | `0.0` to `1.0` | Optional |
-| `puzzle_similarity_threshold` | Threshold for exact puzzle identity. | float | `1.0` | `0.0` to `1.0` | Optional |
+| `structural_similarity_threshold` | Supporting diagnostic threshold for structural similarity; it cannot reject without a text-threshold violation. | float | `0.97` | `0.0` to `1.0` | Optional |
+| `scenario_similarity_threshold` | Supporting diagnostic threshold for scenario field overlap; it cannot reject without a text-threshold violation. | float | `0.95` | `0.0` to `1.0` | Optional |
+| `puzzle_similarity_threshold` | Supporting diagnostic threshold for exact puzzle identity; it cannot reject a distinct conversation by itself. | float | `1.0` | `0.0` to `1.0` | Optional |
 | `related_puzzle_similarity` | Score assigned to related transformed puzzles with the same parent/canonical base. | float | `0.35` | `0.0` to `1.0` | Optional |
 | `related_edge_case_puzzle_similarity` | Score assigned to related edge-case puzzle variants sharing the same parent and edge-case kind. | float | `0.55` | `0.0` to `1.0` | Optional |
 

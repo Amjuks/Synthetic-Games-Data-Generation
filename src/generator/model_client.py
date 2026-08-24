@@ -25,6 +25,9 @@ class ModelClient:
         if self.provider == "tensorstudio" and self.endpoint:
             return self._tensorstudio_generate(prompt)
 
+        if self.provider == "litellm" and self.base_url:
+            return self._litellm_generate(prompt)
+
         if not self.endpoint:
             return self._mock_generate(prompt)
 
@@ -78,6 +81,12 @@ class ModelClient:
                 payload["temperature"] = self.config["temperature"]
             if self.config.get("session_id"):
                 payload["metadata"] = {"session_id": self.config["session_id"]}
+        elif provider == "litellm":
+            payload = {"model": model_name, "messages": [{"role": "user", "content": prompt}]}
+            if self.config.get("max_tokens") is not None:
+                payload["max_tokens"] = self.config["max_tokens"]
+            if self.config.get("temperature") is not None:
+                payload["temperature"] = self.config["temperature"]
         else:
             payload = {
                 "model": model_name,
@@ -178,6 +187,25 @@ class ModelClient:
         response.raise_for_status()
         body = response.json()
         return body.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+    def _litellm_generate(self, prompt: str) -> str:
+        try:
+            from openai import OpenAI
+        except ImportError as exc:
+            raise RuntimeError("The 'openai' package is required for LiteLLM generation.") from exc
+
+        client = OpenAI(
+            base_url=self.base_url,
+            api_key=self.api_key,
+            timeout=self.timeout,
+        )
+        response = client.chat.completions.create(
+            model=self.config.get("model_name", "nemotron-super-free"),
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=self.config.get("max_tokens", 256),
+            temperature=self.config.get("temperature", 0.7),
+        )
+        return response.choices[0].message.content or ""
 
     def _mock_generate(self, prompt: str) -> str:
         prompt_lower = prompt.lower()

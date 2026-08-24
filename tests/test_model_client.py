@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from src.generator.model_client import ModelClient
 
 
@@ -141,3 +143,45 @@ def test_request_description_contains_payload_but_not_credentials():
         "max_output_tokens": 100,
     }
     assert "must-not-be-logged" not in str(description)
+
+
+def test_litellm_provider_uses_openai_chat_completions(monkeypatch):
+    captured: dict = {}
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            captured["request"] = kwargs
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="generated content"))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured["client"] = kwargs
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    client = ModelClient(
+        {
+            "provider": "litellm",
+            "base_url": "http://litellm.test/v1",
+            "api_key": "test-litellm-key",
+            "model_name": "nemotron-super-free",
+            "temperature": 0.7,
+            "max_tokens": 256,
+            "timeout": 120.0,
+        }
+    )
+
+    assert client.generate("Generate a sample") == "generated content"
+    assert captured["client"] == {
+        "base_url": "http://litellm.test/v1",
+        "api_key": "test-litellm-key",
+        "timeout": 120.0,
+    }
+    assert captured["request"] == {
+        "model": "nemotron-super-free",
+        "messages": [{"role": "user", "content": "Generate a sample"}],
+        "max_tokens": 256,
+        "temperature": 0.7,
+    }

@@ -179,3 +179,55 @@ def test_config_loads_tensorstudio_settings_from_dotenv(tmp_path, monkeypatch):
     assert config["model"]["max_tokens"] == 100
     assert config["model"]["timeout"] == 300
     assert config["model"]["session_id"] == "test-001"
+
+
+def test_config_loads_litellm_settings_from_dotenv(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "defaults.yaml").write_text(
+        (
+            "defaults:\n"
+            "  samples: 2\n"
+            "  conversation_type: both\n"
+            "  max_turns: 4\n"
+            "  output_dir: outputs\n"
+            "  model:\n"
+            "    provider: openai\n"
+        ),
+        encoding="utf-8",
+    )
+    (config_dir / "prompts.yaml").write_text("system_prompt: test\n", encoding="utf-8")
+    (tmp_path / ".env").write_text(
+        (
+            "MODEL_PROVIDER=litellm\n"
+            "LITELLM_BASE_URL=http://litellm.test/v1\n"
+            "LITELLM_API_KEY=test-litellm-key\n"
+            "LITELLM_MODEL=nemotron-super-free\n"
+            "LITELLM_TEMPERATURE=0.7\n"
+            "LITELLM_MAX_TOKENS=256\n"
+            "LITELLM_TIMEOUT=120\n"
+        ),
+        encoding="utf-8",
+    )
+
+    for name in (
+        "MODEL_PROVIDER", "LITELLM_BASE_URL", "LITELLM_API_KEY", "LITELLM_MODEL",
+        "LITELLM_TEMPERATURE", "LITELLM_MAX_TOKENS", "LITELLM_TIMEOUT",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(config_module, "ROOT", tmp_path)
+    monkeypatch.setattr(config_module, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(config_module, "DEFAULTS_FILE", config_dir / "defaults.yaml")
+    monkeypatch.setattr(config_module, "PROMPTS_FILE", config_dir / "prompts.yaml")
+
+    config = config_module.get_config()
+
+    assert config["model"] == {
+        "provider": "litellm",
+        "base_url": "http://litellm.test/v1",
+        "api_key": "test-litellm-key",
+        "model_name": "nemotron-super-free",
+        "temperature": 0.7,
+        "max_tokens": 256,
+        "timeout": 120.0,
+    }
