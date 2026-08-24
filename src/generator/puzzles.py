@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import random
+import math
 from pathlib import Path
 from typing import Any
 
@@ -35,8 +35,6 @@ class PuzzleManager:
             ),
         )
         parent = ranked[0]
-        rng = random.Random(self.seed + sample_index * 131)
-
         if scenario.edge_case == "malformed_input":
             return self._build_malformed_variant(parent, sample_index)
         if scenario.edge_case == "invalid_board":
@@ -45,7 +43,7 @@ class PuzzleManager:
             return self._build_unsolvable_variant(parent, sample_index)
         if scenario.edge_case == "ambiguous_board":
             return self._build_ambiguous_variant(parent, sample_index)
-        return self._build_transformed_variant(parent, sample_index, rng)
+        return self._build_transformed_variant(parent, sample_index)
 
     def mark_used(self, puzzle: PuzzleRecord) -> None:
         self.usage_stats[puzzle.puzzle_id] = self.usage_stats.get(puzzle.puzzle_id, 0) + 1
@@ -67,20 +65,20 @@ class PuzzleManager:
             return {}
         return json.loads(self.usage_path.read_text(encoding="utf-8"))
 
-    def _build_transformed_variant(self, parent: PuzzleRecord, sample_index: int, rng: random.Random) -> PuzzleRecord:
-        operations = [
-            "identity",
-            "digit_relabel",
-            "swap_rows_within_band",
-            "swap_cols_within_stack",
-            "swap_bands",
-            "swap_stacks",
-            "rotate_90",
-            "reflect_horizontal",
-        ]
-        operation = operations[sample_index % len(operations)]
-        puzzle_string, solution_string = _apply_transformation(parent.puzzle, parent.solution, operation, rng)
-        return self._make_variant(parent, puzzle_string, solution_string, operation)
+    def _build_transformed_variant(self, parent: PuzzleRecord, sample_index: int) -> PuzzleRecord:
+        # A single operation chosen from a short cycle quickly exhausts the
+        # effective variant pool, especially because rejected generations are
+        # reserved too. Address the full Sudoku symmetry space instead. The
+        # mixed-radix index deterministically composes digit, row, column, band,
+        # stack, and transpose permutations while remaining stable on resume.
+        variant_index = self.seed + sample_index
+        puzzle_string, solution_string = _apply_indexed_transformation(
+            parent.puzzle,
+            parent.solution,
+            variant_index,
+        )
+        transformation = f"indexed_permutation_{variant_index}"
+        return self._make_variant(parent, puzzle_string, solution_string, transformation)
 
     def _build_malformed_variant(self, parent: PuzzleRecord, sample_index: int) -> PuzzleRecord:
         malformed = parent.rendered_board.replace(" | ", " ").replace("-", "")
@@ -368,47 +366,58 @@ def _parse_cell(cell: str) -> tuple[int, int]:
     return int(cell[1]) - 1, int(cell[3]) - 1
 
 
-def _apply_transformation(
+def _apply_indexed_transformation(
     puzzle_string: str,
     solution_string: str,
-    operation: str,
-    rng: random.Random,
+    variant_index: int,
 ) -> tuple[str, str]:
-    puzzle_grid = _to_grid(puzzle_string)
-    solution_grid = _to_grid(solution_string)
+    """Return a reproducible member of the Sudoku symmetry group.
 
-    if operation == "digit_relabel":
-        mapping = {str(index): str(value) for index, value in enumerate(rng.sample(range(1, 10), 9), start=1)}
-        return (
-            _from_grid([[mapping.get(cell, cell) if cell != "0" else "0" for cell in row] for row in puzzle_grid]),
-            _from_grid([[mapping[cell] for cell in row] for row in solution_grid]),
-        )
-    if operation == "swap_rows_within_band":
-        band = rng.randint(0, 2)
-        row_a, row_b = rng.sample(range(band * 3, band * 3 + 3), 2)
-        puzzle_grid[row_a], puzzle_grid[row_b] = puzzle_grid[row_b], puzzle_grid[row_a]
-        solution_grid[row_a], solution_grid[row_b] = solution_grid[row_b], solution_grid[row_a]
-    elif operation == "swap_cols_within_stack":
-        stack = rng.randint(0, 2)
-        col_a, col_b = rng.sample(range(stack * 3, stack * 3 + 3), 2)
-        puzzle_grid = _swap_cols(puzzle_grid, col_a, col_b)
-        solution_grid = _swap_cols(solution_grid, col_a, col_b)
-    elif operation == "swap_bands":
-        band_a, band_b = rng.sample(range(3), 2)
-        puzzle_grid = _swap_bands(puzzle_grid, band_a, band_b)
-        solution_grid = _swap_bands(solution_grid, band_a, band_b)
-    elif operation == "swap_stacks":
-        stack_a, stack_b = rng.sample(range(3), 2)
-        puzzle_grid = _swap_stacks(puzzle_grid, stack_a, stack_b)
-        solution_grid = _swap_stacks(solution_grid, stack_a, stack_b)
-    elif operation == "rotate_90":
-        puzzle_grid = _rotate_90(puzzle_grid)
-        solution_grid = _rotate_90(solution_grid)
-    elif operation == "reflect_horizontal":
-        puzzle_grid = list(reversed(puzzle_grid))
-        solution_grid = list(reversed(solution_grid))
+    There are 9! * 6^8 * 2 addressable combinations (over 1.2 trillion),
+    before accounting for the separate base puzzle in each difficulty band.
+    """
+    code = variant_index
+    digit_order, code = _take_permutation(code, 9)
+    band_order, code = _take_permutation(code, 3)
+    rows_in_bands = []
+    for _ in range(3):
+        order, code = _take_permutation(code, 3)
+        rows_in_bands.append(order)
+    stack_order, code = _take_permutation(code, 3)
+    cols_in_stacks = []
+    for _ in range(3):
+        order, code = _take_permutation(code, 3)
+        cols_in_stacks.append(order)
+    transpose = bool(code % 2)
 
-    return _from_grid(puzzle_grid), _from_grid(solution_grid)
+    row_order = [band * 3 + row for band in band_order for row in rows_in_bands[band]]
+    col_order = [stack * 3 + col for stack in stack_order for col in cols_in_stacks[stack]]
+    digit_map = {str(source + 1): str(target + 1) for source, target in enumerate(digit_order)}
+
+    def transform(value: str) -> str:
+        grid = _to_grid(value)
+        grid = [[grid[row][col] for col in col_order] for row in row_order]
+        if transpose:
+            grid = [list(row) for row in zip(*grid)]
+        return _from_grid([
+            [digit_map.get(cell, cell) if cell != "0" else "0" for cell in row]
+            for row in grid
+        ])
+
+    return transform(puzzle_string), transform(solution_string)
+
+
+def _take_permutation(code: int, size: int) -> tuple[list[int], int]:
+    """Consume one factoradic permutation from a mixed-radix integer."""
+    radix = math.factorial(size)
+    rank, remainder = code % radix, code // radix
+    available = list(range(size))
+    permutation: list[int] = []
+    for remaining in range(size, 0, -1):
+        factor = math.factorial(remaining - 1)
+        position, rank = divmod(rank, factor)
+        permutation.append(available.pop(position))
+    return permutation, remainder
 
 
 def _to_grid(puzzle_string: str) -> list[list[str]]:
@@ -417,32 +426,3 @@ def _to_grid(puzzle_string: str) -> list[list[str]]:
 
 def _from_grid(grid: list[list[str]]) -> str:
     return "".join("".join(row) for row in grid)
-
-
-def _swap_cols(grid: list[list[str]], col_a: int, col_b: int) -> list[list[str]]:
-    new_grid = [list(row) for row in grid]
-    for row in new_grid:
-        row[col_a], row[col_b] = row[col_b], row[col_a]
-    return new_grid
-
-
-def _swap_bands(grid: list[list[str]], band_a: int, band_b: int) -> list[list[str]]:
-    new_grid = [list(row) for row in grid]
-    start_a, start_b = band_a * 3, band_b * 3
-    new_grid[start_a:start_a + 3], new_grid[start_b:start_b + 3] = (
-        new_grid[start_b:start_b + 3],
-        new_grid[start_a:start_a + 3],
-    )
-    return new_grid
-
-
-def _swap_stacks(grid: list[list[str]], stack_a: int, stack_b: int) -> list[list[str]]:
-    new_grid = [list(row) for row in grid]
-    start_a, start_b = stack_a * 3, stack_b * 3
-    for row in new_grid:
-        row[start_a:start_a + 3], row[start_b:start_b + 3] = row[start_b:start_b + 3], row[start_a:start_a + 3]
-    return new_grid
-
-
-def _rotate_90(grid: list[list[str]]) -> list[list[str]]:
-    return [list(row) for row in zip(*grid[::-1])]
