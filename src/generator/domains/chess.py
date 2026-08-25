@@ -525,12 +525,31 @@ class ChessDomainAdapter:
             output = {"valid": True, "verified": True, "rules": ["Pieces move only when the resulting position is legal.", "Check must be answered immediately.", "Castling, en passant, promotion, repetition, and move counters depend on complete position state."], "engine_used": False}
         elif name == "chess_legal_example":
             example_board = chess.Board(fen) if fen else chess.Board()
-            move = sorted(example_board.legal_moves, key=lambda item: item.uci())[0]
-            san = example_board.san(move)
             before = example_board.fen(en_passant="fen")
-            example_board.push(move)
             tool_input = {"fen": before}
-            output = {"valid": True, "verified": True, "san": san, "uci": move.uci(), "fen_before": before, "fen_after": example_board.fen(en_passant="fen"), "engine_used": False}
+            legal_moves = sorted(example_board.legal_moves, key=lambda item: item.uci())
+            if not legal_moves:
+                status = self.toolkit.position_status(before)
+                output = {
+                    "valid": True,
+                    "verified": True,
+                    "legal_move_available": False,
+                    "terminal": status.get("game_over", True),
+                    "checkmate": status.get("checkmate", False),
+                    "stalemate": status.get("stalemate", False),
+                    "outcome": status.get("outcome"),
+                    "reason": "No legal move exists because the supplied position is terminal.",
+                    "fen_before": before,
+                    "fen_after": None,
+                    "san": None,
+                    "uci": None,
+                    "engine_used": False,
+                }
+            else:
+                move = legal_moves[0]
+                san = example_board.san(move)
+                example_board.push(move)
+                output = {"valid": True, "verified": True, "legal_move_available": True, "terminal": False, "san": san, "uci": move.uci(), "fen_before": before, "fen_after": example_board.fen(en_passant="fen"), "engine_used": False}
         elif name == "chess_input_diagnosis":
             mutation = truth.get("mutation", {})
             tool_input = {"input": payload, "mutation": mutation}

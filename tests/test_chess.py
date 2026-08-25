@@ -113,6 +113,33 @@ def test_terminal_draw_repetition_and_insufficient_material_detection():
     assert repetition["can_claim_threefold_repetition"]
 
 
+@pytest.mark.parametrize(
+    ("fen", "terminal_kind"),
+    (
+        ("7k/6Q1/6K1/8/8/8/8/8 b - - 0 1", "checkmate"),
+        ("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1", "stalemate"),
+    ),
+)
+def test_legal_example_reports_terminal_position_without_indexing_empty_moves(tmp_path, fen, terminal_kind):
+    adapter = ChessDomainAdapter(chess_config(tmp_path))
+    selected_scenario = scenario(category="rules_explanation")
+    selected = adapter.select_problem(selected_scenario, 0)
+    selected.puzzle = json.dumps({"input_type": "fen", "fen": fen})
+    selected.ground_truth["current_fen"] = fen
+    selected.metadata["input_type"] = "fen"
+
+    usage = adapter.maybe_use_tool(selected_scenario, selected)
+    example = next(call for call in usage["calls"] if call["tool_name"] == "chess_legal_example")
+
+    assert example["output"]["verified"] is True
+    assert example["output"]["legal_move_available"] is False
+    assert example["output"]["terminal"] is True
+    assert example["output"][terminal_kind] is True
+    assert example["output"]["san"] is None
+    assert example["output"]["uci"] is None
+    assert example["output"]["fen_after"] is None
+
+
 def test_inspection_reports_attacks_defenders_pins_checks_captures_and_material():
     toolkit = ChessToolkit()
     result = toolkit.inspect("4k3/4r3/8/8/8/8/4R3/4K3 w - - 0 1", squares=["e2", "e1"])
